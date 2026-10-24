@@ -1,2 +1,67 @@
-Pull-Up
+# PullUp
 
+PullUp gives a friend group one AI-picked side quest at a real nearby place each week, checks a photo to confirm they did it, and turns the month into a comic. Live at **https://pull-up.tech**.
+
+- Design: `PullUp Architecture.pdf`
+- Guesses we made before the questions were answered: [`ASSUMPTIONS.md`](ASSUMPTIONS.md). Read this first.
+
+## Setup (everyone)
+
+```bash
+npm install
+cp .env.example .env      # paste the real keys from the team's private note
+npm run dev               # http://localhost:3000
+```
+
+| Command | What it does |
+|---|---|
+| `npm run dev` | Run the app locally |
+| `npm run lint` | Check code style |
+| `npm run build` | Production build (run before pushing big changes) |
+| `npm run db:migrate` | Create the tables in Tiger Cloud (needs `DATABASE_URL`) |
+| `npm run db:generate` | After editing `lib/db/schema.ts`, make a new migration |
+| `npm run db:studio` | Browse the database in your browser |
+| `npm run smoke` | Check that every key works (Tiger, Muse, SerpApi, storage) |
+| `npm run seed` | Add the demo crew with 3 weeks of history |
+
+## Who owns what
+
+| Folder / file | Owner |
+|---|---|
+| `app/` pages and forms, `app/manifest.ts` | Frontend |
+| `lib/ai.ts`, `lib/agents/`, `lib/prompts/` | AI |
+| `lib/db/`, `drizzle/`, `lib/serp.ts`, `lib/storage.ts`, `lib/services/`, `scripts/` | Data |
+| `deploy/`, `app/api/connector/`, server, domain, pitch | Infra |
+| `app/api/` routes | Whoever builds that feature |
+
+Look for `TODO(Frontend)`, `TODO(AI)`, `TODO(Data)` comments to find your next task.
+
+## What works now
+
+- Landing page creates a crew (`POST /api/crews`)
+- `/j/CODE` join page with vibe chips (`POST /api/crews/[id]/join`)
+- Session cookie and a members-only check on crew pages
+- SerpApi wrapper with caching, storage upload/download/signed links
+- `GET /api/health`
+
+Everything else returns `501 Not implemented yet` or throws, with a TODO explaining what to build.
+
+## Deploy (Infra)
+
+On the Vultr server (Ubuntu, Node 20+, pm2, Caddy installed):
+
+```bash
+git clone git@github.com:Goldenwind9/Pull-Up.git && cd Pull-Up
+cp .env.example .env   # fill in
+npm ci && npm run build
+pm2 start deploy/ecosystem.config.cjs && pm2 save
+sudo cp deploy/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
+```
+
+Point an **A record** for `pull-up.tech` (and `www`) at the server's IP in the domain registrar.
+
+## Rules
+
+- Never commit `.env` or any key.
+- Small branches, merge to `main` often.
+- Stay in your own folders when you can.

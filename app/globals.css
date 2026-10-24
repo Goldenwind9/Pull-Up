@@ -1,0 +1,128 @@
+@import "tailwindcss";
+
+/* PullUp theme: sunny orange, sky blue, deep blue ink, warm cream. */
+@theme {
+  --color-sun: #ffa62b;
+  --color-sky: #86c5ff;
+  --color-ink: #2e5aa7;
+  --color-cream: #f8e6a0;
+
+  --font-display: var(--font-fredoka), ui-rounded, system-ui, sans-serif;
+
+  --animate-float: float 7s ease-in-out infinite;
+  --animate-float-slow: float 11s ease-in-out infinite;
+  --animate-bounce-in: bounce-in 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  --animate-letter: letter 2.4s ease-in-out infinite;
+  --animate-wiggle: wiggle 0.5s ease-in-out;
+  --animate-marquee: marquee 28s linear infinite;
+  --animate-pop: pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  --animate-spin-slow: spin 14s linear infinite;
+  --animate-shake: shake 0.4s ease-in-out;
+
+  @keyframes float {
+    0%, 100% { transform: translate(0, 0) rotate(0deg); }
+    33% { transform: translate(18px, -24px) rotate(8deg); }
+    66% { transform: translate(-14px, 14px) rotate(-6deg); }
+  }
+  @keyframes bounce-in {
+    0% { opacity: 0; transform: translateY(40px) scale(0.8); }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes letter {
+    0%, 60%, 100% { transform: translateY(0) rotate(0deg); }
+    30% { transform: translateY(-14px) rotate(-6deg); }
+  }
+  @keyframes wiggle {
+    0%, 100% { transform: rotate(0deg); }
+    25% { transform: rotate(-4deg) scale(1.04); }
+    75% { transform: rotate(4deg) scale(1.04); }
+  }
+  @keyframes marquee {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+  @keyframes pop {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.18) rotate(-3deg); }
+    100% { transform: scale(1); }
+  }
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-6px); }
+    75% { transform: translateX(6px); }
+  }
+}
+
+/* Chunky "sticker" look: thick ink outline + hard offset shadow. */
+@utility sticker {
+  border: 3px solid var(--color-ink);
+  border-radius: 1.25rem;
+  box-shadow: 5px 5px 0 var(--color-ink);
+}
+
+@utility btn {
+  border: 3px solid var(--color-ink);
+  border-radius: 999px;
+  box-shadow: 4px 4px 0 var(--color-ink);
+  font-family: var(--font-display);
+  font-weight: 700;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease,
+    background-color 0.2s ease;
+  &:hover:not(:disabled) {
+    transform: translate(-2px, -2px) rotate(-1deg);
+    box-shadow: 6px 6px 0 var(--color-ink);
+  }
+  &:active:not(:disabled) {
+    transform: translate(3px, 3px);
+    box-shadow: 1px 1px 0 var(--color-ink);
+  }
+}
+
+@utility field {
+  border: 3px solid var(--color-ink);
+  border-radius: 1rem;
+  background: white;
+  padding: 0.85rem 1.1rem;
+  font-size: 1.05rem;
+  outline: none;
+  transition:
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+  &::placeholder {
+    color: color-mix(in srgb, var(--color-ink) 45%, transparent);
+  }
+  &:focus {
+    box-shadow: 4px 4px 0 var(--color-sun);
+    transform: translate(-2px, -2px);
+  }
+}
+
+body {
+  background: var(--color-cream);
+  color: var(--color-ink);
+  font-family: var(--font-display);
+}
+
+/* Dotted confetti texture behind everything. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-image: radial-gradient(
+    color-mix(in srgb, var(--color-sun) 35%, transparent) 2px,
+    transparent 2px
+  );
+  background-size: 28px 28px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
