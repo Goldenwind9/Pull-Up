@@ -17,6 +17,12 @@ export async function getPastQuests(crewId: string) {
     .limit(8);
 }
 
+/** False for a session whose user was deleted (e.g. by `npm run db:clean`). */
+export async function userExists(userId: string) {
+  const [row] = await db.select({ id: schema.users.id }).from(schema.users).where(eq(schema.users.id, userId)).limit(1);
+  return Boolean(row);
+}
+
 export async function isMember(crewId: string, userId: string) {
   const [row] = await db
     .select({ userId: schema.crewMembers.userId })

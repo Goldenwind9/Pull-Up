@@ -1,7 +1,13 @@
 // Vultr Object Storage (S3-compatible). Photos are uploaded by the server,
 // and shown to crew members through short-lived signed links.
 
-import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  ListObjectsV2Command,
+  DeleteObjectsCommand,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const s3 = new S3Client({
@@ -30,4 +36,28 @@ export async function getObject(key: string): Promise<Buffer> {
 /** Link that works for 10 minutes. Never make the bucket public. */
 export function signedUrl(key: string, expiresIn = 600) {
   return getSignedUrl(s3, new GetObjectCommand({ Bucket: BUCKET, Key: key }), { expiresIn });
+}
+
+/** Every key under `prefix` (e.g. "proofs/"). */
+export async function listKeys(prefix: string): Promise<string[]> {
+  const keys: string[] = [];
+  let token: string | undefined;
+  do {
+    const res = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix, ContinuationToken: token }));
+    for (const obj of res.Contents ?? []) if (obj.Key) keys.push(obj.Key);
+    token = res.IsTruncated ? res.NextContinuationToken : undefined;
+  } while (token);
+  return keys;
+}
+
+/** Deletes these keys, 1000 per request (the S3 limit). */
+export async function deleteKeys(keys: string[]) {
+  for (let i = 0; i < keys.length; i += 1000) {
+    await s3.send(
+      new DeleteObjectsCommand({
+        Bucket: BUCKET,
+        Delete: { Objects: keys.slice(i, i + 1000).map((Key) => ({ Key })), Quiet: true },
+      }),
+    );
+  }
 }

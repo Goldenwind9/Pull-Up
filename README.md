@@ -23,6 +23,7 @@ npm run dev               # http://localhost:3000
 | `npm run db:studio` | Browse the database in your browser |
 | `npm run smoke` | Check that every key works (Tiger, Muse, SerpApi, storage) |
 | `npm run seed` | Add the demo crew with 3 weeks of history |
+| `npm run db:clean` | Show test data to delete (every crew but the demo, users in no crew, their stored photos); add `-- --yes` to delete |
 
 ## File structure
 ```

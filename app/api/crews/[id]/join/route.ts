@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { joinCrew, addMember } from "@/lib/services/crews";
 import { getSession, requireMember, setSession } from "@/lib/session";
+import { userExists } from "@/lib/db/queries";
 import { VIBES, MIN_VIBES, MAX_VIBES } from "@/lib/vibes";
 
 const Body = z.object({
@@ -23,9 +24,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Already in this crew: don't create a duplicate person.
   if (await requireMember(id)) return NextResponse.json({ crewId: id });
 
-  // Already signed in from another crew: reuse that person.
+  // Already signed in from another crew: reuse that person (unless they were deleted).
   const session = await getSession();
-  if (session) {
+  if (session && (await userExists(session.userId))) {
     await addMember(id, session.userId);
     return NextResponse.json({ crewId: id });
   }
