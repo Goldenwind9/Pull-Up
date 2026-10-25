@@ -52,5 +52,30 @@ export function inviteLink(code: string) {
   return `${process.env.APP_URL ?? "https://pull-up.tech"}/j/${code}`;
 }
 
-// TODO(Data): getCrewHome(crewId) -> crew, members, this week's quests + votes,
-// active quest, recent proofs, stats from crew_weekly.
+//Called by /app/c/[crewId]/page.tsx
+//getCrewHome(crewId) -> crew, members, this week's quests + votes,
+// active quest, recent proofs, stats from crew_weekly
+export async function getCrewHome(crewId: string)
+{
+  const [crew] = await db
+    .select()
+    .from(schema.crews)
+    .where(eq(schema.crews.id, crewId))
+    .limit(1);
+
+  //look in table crew_members to find id of crew in crews
+
+  //look in table quests for quests, active quest
+
+  //look in table quest_votes
+
+  //look in table proofs for recent proofs
+
+  //look in table crew_weekly for stats
+
+  console.log(crew);
+  
+  return {
+    "crew": crew
+  }
+}
