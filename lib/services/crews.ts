@@ -4,6 +4,8 @@ import { customAlphabet } from "nanoid";
 import { eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { logActivity } from "./activity";
+import { Share_Tech_Mono } from "next/font/google";
+import { act } from "react";
 
 // No look-alike characters (0/O, 1/l), so codes are easy to read aloud.
 const inviteCode = customAlphabet("23456789abcdefghjkmnpqrstuvwxyz", 6);
@@ -57,25 +59,85 @@ export function inviteLink(code: string) {
 // active quest, recent proofs, stats from crew_weekly
 export async function getCrewHome(crewId: string)
 {
-  const [crew] = await db
+  var [crew] = await db
     .select()
     .from(schema.crews)
     .where(eq(schema.crews.id, crewId))
-    .limit(1);
+    .limit(1) ?? null;
 
-  //look in table crew_members to find id of crew in crews
+  //look in table crew_members to find id of users in crews
+  var memberIds;
+  if (crew)
+  {
+    memberIds = await db.select()
+    .from(schema.crewMembers)
+    .where(eq(schema.crewMembers.crewId, crewId));
+  }
 
-  //look in table quests for quests, active quest
+  var members = [];
+  if (memberIds)
+  {
+    for (const memberId of memberIds)
+    {
+      const [member] = await db.select()
+        .from(schema.users)
+        .where(eq(schema.users.id, memberId.userId));
+      members.push(member);
+    }
+  }
+
+  //look in table quests for quests
+  const quests = await db.select()
+    .from(schema.quests)
+    .where(eq(schema.quests.crewId, crewId)) ?? null;
+  
+  var activeQuest = null;
+  for (const quest of quests)
+  {
+    if (quest.status === "active")
+    {
+      activeQuest = quest;
+      break;
+    }
+  }
 
   //look in table quest_votes
+  var questVotes = []
+  
+  questVotes = await db
+    .select()
+    .from(schema.questVotes)
+    .where(eq(schema.questVotes.crewId, crewId));
 
+  var proofs = [];
   //look in table proofs for recent proofs
+  if (memberIds)
+  {
+    for (const memberId of memberIds)
+    {
+      const userProofs = await db
+        .select()
+        .from(schema.proofs)
+        .where(eq(schema.proofs.userId, memberId.userId));
+      for (const proof of userProofs)
+      {
+        proofs.push(proof);
+      }
+    }
+  }
 
   //look in table crew_weekly for stats
+  const weeklyStats = await db.select()
+    .from(schema.crewWeekly)
+    .where(eq(schema.crewWeekly.crewId, crewId)) ?? null;
 
-  console.log(crew);
-  
   return {
-    "crew": crew
+    "crew": crew,
+    "members": members,
+    "quests": quests,
+    "activeQuest": activeQuest,
+    "questVotes": questVotes,
+    "proofs": proofs,
+    "weeklyStats": weeklyStats
   }
 }
