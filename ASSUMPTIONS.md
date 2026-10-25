@@ -18,6 +18,7 @@ Status key: **Assumed** = guessed, not confirmed yet. **Decided** = the team agr
 | A8 | Tiger Cloud | The free tier includes TimescaleDB, and the connection requires SSL. | Assumed | `lib/db/index.ts`, `drizzle/0001_timescale.sql` |
 | A9 | Vultr | Credits cover one small VM and Object Storage. | Assumed | `deploy/` |
 | A10 | Domain | **pull-up.tech** (with a dash) replaces `pullup.tech` from the design doc. | Decided | `.env.example`, `deploy/Caddyfile`, `lib/services/crews.ts` |
+| A11 | Which Muse model, and is it reliable? | `muse-spark-1.2` (was 1.1). On 2026-10-24, 1.1 answered `404 model_not_found` at random (about 1 call in 12, so roughly a third of Pull ups failed with a 500); 1.2 and 1.3 had none and are as fast. `lib/ai.ts` retries `model_not_found` for every AI call, and the last retry uses `AI_FALLBACK_MODEL` (default 1.2). | Decided | `lib/ai.ts`, `.env` |
 
 ## B. Product decisions
 
