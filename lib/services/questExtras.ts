@@ -1,7 +1,7 @@
 // Secret roles + photo bingo for a quest that just started. Owner: AI + Data.
 // Idempotent: deals roles only to members who don't have one yet (late joiners get one
 // on their first visit) and writes the bingo card once.
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { crewFeatures } from "@/lib/db/queries";
 
@@ -25,7 +25,8 @@ async function prepare(questId: string): Promise<void> {
       .select({ userId: schema.users.id, name: schema.users.name, interests: schema.users.interests })
       .from(schema.crewMembers)
       .innerJoin(schema.users, eq(schema.users.id, schema.crewMembers.userId))
-      .where(eq(schema.crewMembers.crewId, quest.crewId)),
+      .where(eq(schema.crewMembers.crewId, quest.crewId))
+      .orderBy(asc(schema.crewMembers.joinedAt)), // join order: roles are dealt predictably
     db.select().from(schema.questRoles).where(eq(schema.questRoles.questId, questId)),
     db.select({ idx: schema.bingoSquares.idx }).from(schema.bingoSquares).where(eq(schema.bingoSquares.questId, questId)),
   ]);
@@ -37,7 +38,7 @@ async function prepare(questId: string): Promise<void> {
   // Lazy import: the AI client throws at import time without AI_API_KEY.
   const { writeQuestExtras } = await import("@/lib/agents/questExtras");
   const extras = await writeQuestExtras({
-    quest: { title: quest.title, task: quest.task, placeName: quest.placeName },
+    quest: { title: quest.title, task: quest.task, placeName: quest.placeName, sourceRef: quest.sourceRef },
     members: missing.map((m) => ({ name: m.name, interests: m.interests })),
     takenRoles: roles.map((r) => r.role),
     wantBingo,

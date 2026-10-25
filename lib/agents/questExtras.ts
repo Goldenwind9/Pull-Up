@@ -2,6 +2,7 @@
 // so a quest always starts with both. Owner: AI.
 import { z } from "zod";
 import { EXTRAS_SYSTEM_PROMPT, extrasUserPrompt } from "@/lib/prompts/extras";
+import { completeDemo, DEMO_BINGO, DEMO_ROLES, DEMO_WINNER_REF } from "@/lib/demo";
 
 export type Role = { role: string; emoji: string; mission: string };
 export type QuestExtras = { roles: Role[]; bingo: string[] };
@@ -42,16 +43,21 @@ const FALLBACK_BINGO = [
   "something bright purple",
 ];
 
-function fallback(memberCount: number, takenRoles: string[], wantBingo: boolean): QuestExtras {
-  const free = FALLBACK_ROLES.filter((r) => !takenRoles.includes(r.role));
-  const pool = [...(free.length ? free : FALLBACK_ROLES)].sort(() => Math.random() - 0.5);
-  const roles = Array.from({ length: memberCount }, (_, i) => {
+/** `count` distinct roles from `all`, skipping taken ones, in order (or shuffled). */
+function dealRoles(all: Role[], count: number, takenRoles: string[], shuffle: boolean): Role[] {
+  const free = all.filter((r) => !takenRoles.includes(r.role));
+  const pool = [...(free.length ? free : all)];
+  if (shuffle) pool.sort(() => Math.random() - 0.5);
+  return Array.from({ length: count }, (_, i) => {
     const base = pool[i % pool.length];
     const round = Math.floor(i / pool.length);
     // A crew bigger than the pool: number the repeats so roles stay distinct.
     return round ? { ...base, role: `${base.role} #${round + 1}` } : base;
   });
-  return { roles, bingo: wantBingo ? FALLBACK_BINGO : [] };
+}
+
+function fallback(memberCount: number, takenRoles: string[], wantBingo: boolean): QuestExtras {
+  return { roles: dealRoles(FALLBACK_ROLES, memberCount, takenRoles, true), bingo: wantBingo ? FALLBACK_BINGO : [] };
 }
 
 function extractJson(raw: string): unknown {
@@ -63,12 +69,21 @@ function extractJson(raw: string): unknown {
 
 /** Roles for `members` (in order) and, if `wantBingo`, 5 bingo prompts. Never throws. */
 export async function writeQuestExtras(input: {
-  quest: { title: string; task: string; placeName: string };
+  quest: { title: string; task: string; placeName: string; sourceRef?: string };
   members: { name: string; interests: string[] }[];
   takenRoles: string[];
   wantBingo: boolean;
 }): Promise<QuestExtras> {
   if (input.members.length === 0 && !input.wantBingo) return { roles: [], bingo: [] };
+  if (completeDemo()) {
+    // Scripted demo: the Cidercade quest gets the arcade roles and bingo, anything else the built-in set.
+    if (input.quest.sourceRef !== DEMO_WINNER_REF) return fallback(input.members.length, input.takenRoles, input.wantBingo);
+    // In join order, not shuffled, so the presenter knows who gets which role.
+    return {
+      roles: dealRoles(DEMO_ROLES, input.members.length, input.takenRoles, false),
+      bingo: input.wantBingo ? DEMO_BINGO : [],
+    };
+  }
   try {
     // Lazy import: lib/ai throws at import time without AI_API_KEY.
     const { ai, MODEL } = await import("@/lib/ai");

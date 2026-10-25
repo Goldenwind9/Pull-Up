@@ -78,6 +78,18 @@ Still missing: the Muse connector (`app/api/connector/`, returns 501), PWA icons
 
 Test scripts (use the real database, clean up after themselves): `npx tsx scripts/test-voting.ts [--agent]`, `npx tsx scripts/test-recap.ts`, `npx tsx scripts/test-proof-modes.ts [photo.jpg]` (AI only, no database). `npx tsx scripts/test-hours.ts` checks the opening-hours parser (no network). `npm run recap:folder -- <folder>` makes a recap card from any folder of photos (no database).
 
+## Scripted judging demo
+
+Set `COMPLETE_DEMO_MODE=true` in `.env` and restart. Everything is scripted in `lib/demo.ts`, with no AI or SerpApi calls, so it works even where the model API is blocked:
+
+1. Landing page: vibe chips are pre-picked. Make the crew; judges join with the invite link (also pre-picked).
+2. **Pull up** → 3 quests (Arcade Gauntlet at Cidercade, Vinyl Roulette, Mural Hunt). Any vote starts the Arcade Gauntlet.
+3. Roles are dealt in join order: High Score Hunter, Critic, Rockstar, Photographer, Hype Person, Wildcard.
+4. Upload the 5 photos from `Demo/Photos` (any order): each checks off its bingo square with a caption and fun fact → BINGO.
+5. **Recap** → "Cidercade Champions", with the roles revealed.
+
+`Demo/Photos` must be on the server too (the photos are matched by how they look, not file name).
+
 ## Deploy (Infra)
 
 On the Vultr server (Ubuntu, Node 20+, pm2, Caddy installed):

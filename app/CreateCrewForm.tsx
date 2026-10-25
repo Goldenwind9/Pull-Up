@@ -10,11 +10,12 @@ import { DEFAULT_FEATURES } from "@/lib/features";
 
 const DEFAULT_HOME = { label: "UT Austin", lat: 30.2849, lng: -97.7341 };
 
-export default function CreateCrewForm() {
+/** `initialTags`: vibes picked up front (the demo tags in COMPLETE_DEMO_MODE). */
+export default function CreateCrewForm({ initialTags = [] }: { initialTags?: string[] }) {
   const router = useRouter();
   const [crewName, setCrewName] = useState("");
   const [yourName, setYourName] = useState("");
-  const [picked, setPicked] = useState<string[]>([]);
+  const [picked, setPicked] = useState<string[]>(initialTags);
   const [features, setFeatures] = useState(DEFAULT_FEATURES);
   const [showExtras, setShowExtras] = useState(false);
   const [home, setHome] = useState(DEFAULT_HOME);

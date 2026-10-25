@@ -56,6 +56,24 @@ async function cachedSearch(engine: Engine, params: Record<string, string>) {
   return response as Record<string, unknown>;
 }
 
+/** A search that matches exactly one place returns `place_results` instead of a list. */
+function mapResults(res: Record<string, unknown>): Record<string, any>[] {
+  const list = res.local_results as Record<string, any>[] | undefined;
+  if (list?.length) return list;
+  const single = res.place_results as Record<string, any> | undefined;
+  if (!single) return [];
+  // The single-place shape lists hours as [{ monday: "..." }, ...] instead of one object.
+  const hours = Array.isArray(single.hours) ? Object.assign({}, ...single.hours) : undefined;
+  return [
+    {
+      ...single,
+      type: Array.isArray(single.type) ? single.type[0] : single.type,
+      hours: single.open_state, // the list shape's "hours" is this status line
+      operating_hours: single.operating_hours ?? hours,
+    },
+  ];
+}
+
 function toPlace(r: Record<string, any>): Place {
   return {
     name: r.title,
@@ -79,14 +97,14 @@ export async function searchPlaces(query: string, lat: number, lng: number): Pro
     type: "search",
   });
   // Field names checked against a real response on 2026-10-24 (A7).
-  const results = (res.local_results as Record<string, any>[] | undefined) ?? [];
+  const results = mapResults(res);
   return results.slice(0, 8).map(toPlace);
 }
 
 /** Nearby places at street level (zoom 16), for "within walking distance" searches. */
 export async function searchPlacesNearby(query: string, lat: number, lng: number): Promise<Place[]> {
   const res = await cachedSearch("google_maps", { q: query, ll: `@${lat},${lng},16z`, type: "search" });
-  const results = (res.local_results as Record<string, any>[] | undefined) ?? [];
+  const results = mapResults(res);
   return results.slice(0, 20).map(toPlace);
 }
 

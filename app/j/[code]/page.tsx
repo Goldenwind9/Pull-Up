@@ -4,6 +4,7 @@ import { getCrewByInviteCode } from "@/lib/services/crews";
 import { requireMember } from "@/lib/session";
 import Blobs from "@/app/components/Blobs";
 import JoinForm from "./JoinForm";
+import { completeDemo, DEMO_TAGS } from "@/lib/demo";
 
 export default async function JoinPage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = await params;
@@ -23,7 +24,7 @@ export default async function JoinPage({ params }: { params: Promise<{ code: str
         </h1>
       </header>
       <section className="sticker animate-bounce-in bg-white p-5" style={{ animationDelay: "0.2s" }}>
-        <JoinForm crewId={crew.id} />
+        <JoinForm crewId={crew.id} initialTags={completeDemo() ? DEMO_TAGS : []} />
       </section>
     </main>
   );

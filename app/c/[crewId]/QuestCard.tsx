@@ -15,7 +15,8 @@ import { TIMEZONE } from "@/lib/time";
 /** "Open in Google Maps" (B15). Place ids open the exact listing; events fall back to a text search. */
 function mapsUrl(q: Quest) {
   const params = new URLSearchParams({ api: "1", query: [q.placeName, q.address].filter(Boolean).join(", ") });
-  if (q.source === "google_maps") params.set("query_place_id", q.sourceRef);
+  // Real Google place ids start with "ChIJ"; scripted demo quests have made-up refs.
+  if (q.source === "google_maps" && q.sourceRef.startsWith("ChIJ")) params.set("query_place_id", q.sourceRef);
   return `https://www.google.com/maps/search/?${params}`;
 }
 

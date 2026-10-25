@@ -7,6 +7,8 @@ import { db, schema } from "@/lib/db";
 import { crewFeatures, isMember } from "@/lib/db/queries";
 import { putObject, signedUrl } from "@/lib/storage";
 import { logActivity } from "./activity";
+import type { ProofVerdict } from "@/lib/agents/verifyProof";
+import { completeDemo, demoPause, recognizeDemoPhoto, DEMO_BINGO, DEMO_UNKNOWN_CAPTION, DEMO_WINNER_REF } from "@/lib/demo";
 import { ServiceError } from "./errors";
 
 export type Proof = typeof schema.proofs.$inferSelect;
@@ -58,8 +60,6 @@ export async function submitProof(
   }
 
   const key = photoKey(quest.crewId, questId);
-  // Lazy import: lib/ai throws at import time without AI_API_KEY.
-  const { verifyProof } = await import("@/lib/agents/verifyProof");
   const bonus = quest.status === "done";
   const { photoBingo } = await crewFeatures(quest.crewId);
   // Photo bingo: the checker also looks for any square nobody has checked yet.
@@ -69,13 +69,18 @@ export async function submitProof(
         .from(schema.bingoSquares)
         .where(and(eq(schema.bingoSquares.questId, questId), isNull(schema.bingoSquares.proofId)))
     : [];
-  const [verdict] = await Promise.all([
-    verifyProof(
-      { photo: jpeg, task: quest.task, proofHint: quest.proofHint, placeName: quest.placeName, bingo: openSquares },
-      bonus ? "off" : undefined,
-    ),
-    putObject(key, jpeg, "image/jpeg"),
-  ]);
+  const check = completeDemo()
+    ? demoCheck(jpeg, quest.sourceRef, openSquares)
+    : (async () => {
+        // Lazy import: lib/ai throws at import time without AI_API_KEY.
+        const { verifyProof } = await import("@/lib/agents/verifyProof");
+        const verdict = await verifyProof(
+          { photo: jpeg, task: quest.task, proofHint: quest.proofHint, placeName: quest.placeName, bingo: openSquares },
+          bonus ? "off" : undefined,
+        );
+        return { verdict, funFact: null };
+      })();
+  const [{ verdict, funFact }] = await Promise.all([check, putObject(key, jpeg, "image/jpeg")]);
 
   const [proof] = await db
     .insert(schema.proofs)
@@ -89,6 +94,7 @@ export async function submitProof(
       confidence: bonus ? null : verdict.confidence,
       reason: bonus ? "Bonus photo: the quest was already done, so it wasn't checked." : verdict.reason,
       caption: verdict.caption,
+      funFact: photoBingo ? funFact : null, // scripted demo only; otherwise filled in the background
     })
     .returning();
   await logActivity({
@@ -118,7 +124,7 @@ export async function submitProof(
 
   // Fun fact in the background: Lens + the model take a while, and the crew page
   // refreshes itself while a quest is on, so it shows up on its own.
-  if (photoBingo) void addFunFact(proof.id, key, jpeg, quest.placeName);
+  if (photoBingo && !completeDemo()) void addFunFact(proof.id, key, jpeg, quest.placeName);
 
   return { proof, bingo: checked.map((c) => c.prompt) };
 }
@@ -155,4 +161,31 @@ async function addFunFact(proofId: string, key: string, photo: Buffer, placeName
   } catch (err) {
     console.warn("[proofs] fun fact failed:", err);
   }
+}
+
+/**
+ * COMPLETE_DEMO_MODE photo check (lib/demo.ts): every photo passes. The 5 demo photos get
+ * their scripted caption and fun fact, and check off their bingo square on the Cidercade quest.
+ */
+async function demoCheck(
+  jpeg: Buffer,
+  sourceRef: string,
+  openSquares: { idx: number; prompt: string }[],
+): Promise<{ verdict: ProofVerdict; funFact: string | null }> {
+  await demoPause(1500); // let "Checking your photo…" show
+  const photo = await recognizeDemoPhoto(jpeg);
+  const square =
+    photo && sourceRef === DEMO_WINNER_REF
+      ? openSquares.find((s) => s.idx === photo.bingo && s.prompt === DEMO_BINGO[photo.bingo])
+      : undefined;
+  return {
+    verdict: {
+      verdict: "pass",
+      confidence: 0.95,
+      reason: "Scripted demo check.",
+      caption: photo?.caption ?? DEMO_UNKNOWN_CAPTION,
+      bingo: square ? [square.idx] : [],
+    },
+    funFact: photo?.funFact ?? null,
+  };
 }

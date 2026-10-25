@@ -1,5 +1,6 @@
 // Landing + create crew. Owner: Frontend.
 import CreateCrewForm from "./CreateCrewForm";
+import { completeDemo, DEMO_TAGS } from "@/lib/demo";
 import Blobs from "./components/Blobs";
 import BouncyTitle from "./components/BouncyTitle";
 
@@ -19,6 +20,9 @@ const STEPS = [
   { emoji: "📸", title: "Prove it", body: "Snap a pic. The AI checks it and roasts you with a caption.", color: "bg-sky", tilt: "2deg" },
   { emoji: "💥", title: "Get the recap", body: "Your best shots become one story card. Drop it in the group chat.", color: "bg-white", tilt: "-1.5deg" },
 ];
+
+// Rendered per request so COMPLETE_DEMO_MODE takes effect without a rebuild.
+export const dynamic = "force-dynamic";
 
 export default function Home() {
   return (
@@ -65,7 +69,7 @@ export default function Home() {
         <h2 className="mb-4 text-2xl font-bold">
           Start a crew <span className="inline-block animate-letter">👇</span>
         </h2>
-        <CreateCrewForm />
+        <CreateCrewForm initialTags={completeDemo() ? DEMO_TAGS : []} />
       </section>
     </main>
   );

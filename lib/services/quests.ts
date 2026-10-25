@@ -8,7 +8,9 @@ import { db, schema } from "@/lib/db";
 import type { TravelTime } from "@/lib/db/schema";
 import { isMember } from "@/lib/db/queries";
 import { featuresOf } from "@/lib/features";
-import { centroid, type Point } from "@/lib/geo";
+import { centroid, walkMinutes, type Point } from "@/lib/geo";
+import { completeDemo, demoPause, DEMO_NOW_QUESTS, DEMO_QUESTS, DEMO_WINNER_REF } from "@/lib/demo";
+import type { CrewProfile, ProposedQuest } from "@/lib/agents/questAgent";
 import { weekStart, dayOfWeek, VOTE_WINDOW_MS } from "@/lib/time";
 import { logActivity } from "./activity";
 import { ServiceError } from "./errors";
@@ -27,6 +29,41 @@ const NO_VIBES = ["open to anything"];
  */
 async function lockCrew(tx: Tx, crewId: string) {
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${"crew:" + crewId}))`);
+}
+
+/** The quest agent, or the scripted quests in COMPLETE_DEMO_MODE (lib/demo.ts). */
+async function proposeQuests(scripted: ProposedQuest[], profile: CrewProfile): Promise<ProposedQuest[]> {
+  if (completeDemo()) {
+    await demoPause(3000); // let the loading screen play, like the real agent
+    return scripted;
+  }
+  // Lazy import: lib/ai throws at import time without AI_API_KEY, and this file
+  // is also loaded by the crew page through resolveVoting.
+  const { runQuestAgent } = await import("@/lib/agents/questAgent");
+  return runQuestAgent(profile);
+}
+
+/** Scripted demo: any vote closes voting, and the Cidercade quest always wins. */
+async function rigDemoVote(tx: Tx, crewId: string, week: string) {
+  const proposals = await tx
+    .select({ id: schema.quests.id, sourceRef: schema.quests.sourceRef })
+    .from(schema.quests)
+    .where(
+      and(
+        eq(schema.quests.crewId, crewId),
+        eq(schema.quests.weekStart, week),
+        eq(schema.quests.kind, "weekly"),
+        eq(schema.quests.status, "proposed"),
+      ),
+    )
+    .orderBy(asc(schema.quests.createdAt));
+  const winner = proposals.find((q) => q.sourceRef === DEMO_WINNER_REF) ?? proposals[0];
+  if (!winner) return;
+  await tx.update(schema.quests).set({ status: "active" }).where(eq(schema.quests.id, winner.id));
+  await tx
+    .update(schema.quests)
+    .set({ status: "expired" })
+    .where(and(inArray(schema.quests.id, proposals.map((q) => q.id)), ne(schema.quests.id, winner.id)));
 }
 
 async function hasQuestsThisWeek(conn: typeof db | Tx, crewId: string, week: string) {
@@ -71,6 +108,15 @@ async function tripsTo(place: { lat: number | null; lng: number | null }, member
   const to = { lat: place.lat, lng: place.lng };
   const starting = members.filter((m) => m.startLat != null && m.startLng != null);
   if (!starting.length) return null;
+  if (completeDemo()) {
+    // Scripted demo: estimate from distance instead of calling Directions (no SerpApi).
+    return starting.map((m) => {
+      const walk = walkMinutes({ lat: m.startLat!, lng: m.startLng! }, to);
+      // Past a 25-minute walk, assume a bus: about 3x faster plus a wait.
+      const trip = walk <= 25 ? { minutes: walk, mode: "walking" } : { minutes: Math.round(8 + walk / 3), mode: "transit" };
+      return { userId: m.userId, name: m.name, from: m.startLabel ?? "", ...trip };
+    });
+  }
   // Lazy import: lib/serp loads lib/ai, which throws at import time without AI_API_KEY.
   const { travelTime } = await import("@/lib/serp");
   const trips = await Promise.allSettled(
@@ -114,10 +160,7 @@ async function runGeneration(crewId: string): Promise<Quest[]> {
     : [];
   const center = starts.length >= 2 ? centroid(starts) : null;
 
-  // Lazy import: lib/ai throws at import time without AI_API_KEY, and this file
-  // is also loaded by the crew page through resolveVoting.
-  const { runQuestAgent } = await import("@/lib/agents/questAgent");
-  const proposed = await runQuestAgent({
+  const proposed = await proposeQuests(DEMO_QUESTS, {
     crewId,
     memberInterests: members.map((m) => (m.interests.length ? m.interests : NO_VIBES)),
     homeLabel: crew.homeLabel,
@@ -132,10 +175,10 @@ async function runGeneration(crewId: string): Promise<Quest[]> {
   });
   const trips = await Promise.all(proposed.map((q) => (fair ? tripsTo(q.place, members) : null)));
   // Fairest first (shortest longest-trip). The order is also the no-votes tie-break (B22).
+  // The scripted demo keeps its own order, so the cards always appear the same way.
   const longest = (t: TravelTime[] | null) => (t ? Math.max(...t.map((x) => x.minutes)) : Infinity);
-  const ranked = proposed
-    .map((q, i) => ({ q, travel: trips[i] }))
-    .sort((a, b) => longest(a.travel) - longest(b.travel));
+  const ranked = proposed.map((q, i) => ({ q, travel: trips[i] }));
+  if (!completeDemo()) ranked.sort((a, b) => longest(a.travel) - longest(b.travel));
 
   const now = Date.now();
   return db.transaction(async (tx) => {
@@ -198,6 +241,7 @@ export async function castVote(questId: string, userId: string): Promise<Quest |
       .onConflictDoNothing()
       .returning();
     if (!inserted.length) throw new ServiceError("You already voted this week", 409);
+    if (completeDemo()) await rigDemoVote(tx, quest.crewId, quest.weekStart);
   });
 
   await logActivity({ crewId: quest.crewId, userId, kind: "voted", questId });
@@ -350,8 +394,7 @@ async function runNowGeneration(crewId: string, request: NowRequest): Promise<Qu
   }
   const members = await loadMembers(crewId);
 
-  const { runQuestAgent } = await import("@/lib/agents/questAgent");
-  const proposed = await runQuestAgent({
+  const proposed = await proposeQuests(DEMO_NOW_QUESTS, {
     crewId,
     memberInterests: members.map((m) => (m.interests.length ? m.interests : NO_VIBES)),
     homeLabel: crew.homeLabel,

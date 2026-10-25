@@ -5,10 +5,11 @@ import { useRouter } from "next/navigation";
 import { MIN_VIBES } from "@/lib/vibes";
 import VibePicker from "@/app/components/VibePicker";
 
-export default function JoinForm({ crewId }: { crewId: string }) {
+/** `initialTags`: vibes picked up front (the demo tags in COMPLETE_DEMO_MODE). */
+export default function JoinForm({ crewId, initialTags = [] }: { crewId: string; initialTags?: string[] }) {
   const router = useRouter();
   const [name, setName] = useState("");
-  const [picked, setPicked] = useState<string[]>([]);
+  const [picked, setPicked] = useState<string[]>(initialTags);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 

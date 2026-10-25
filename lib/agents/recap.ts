@@ -5,6 +5,7 @@ import { z } from "zod";
 import { CARD_HEIGHT, CARD_WIDTH, MAX_TILES, renderRecapCard } from "@/lib/recap/card";
 import type OpenAI from "openai";
 import { RECAP_SCRIPT_PROMPT, recapScriptUserPrompt } from "@/lib/prompts/recap";
+import { completeDemo, demoPause, DEMO_RECAP_TITLE } from "@/lib/demo";
 
 export { CARD_HEIGHT, CARD_WIDTH };
 
@@ -191,6 +192,11 @@ async function writeScript(
   images: (Buffer | null)[],
   roles: RecapRole[] = [],
 ): Promise<RecapScript> {
+  if (completeDemo()) {
+    // Scripted demo (lib/demo.ts): fixed title, and each photo keeps its scripted caption.
+    await demoPause(3000);
+    return { title: DEMO_RECAP_TITLE, captions: fallbackScript(photos).captions };
+  }
   const schema = scriptSchema(photos.length);
   const prompt = recapScriptUserPrompt(crewName, photos, roles);
   let thumbs: (Buffer | null)[] | undefined = await thumbnails(images);
