@@ -1,111 +1,102 @@
 # PullUp
 
-PullUp gives a friend group one AI-picked side quest at a real nearby place each week, checks a photo to confirm they did it, and turns the crew's photos into a shareable recap card. Live at **https://pull-up.tech**.
+**One side quest a week, for your friend group, at a real place nearby.**
 
-- Design: `PullUp Architecture.pdf`
-- Guesses we made before the questions were answered: [`ASSUMPTIONS.md`](ASSUMPTIONS.md). Read this first.
+Group chats are great at "we should hang out" and terrible at actually doing it. PullUp fixes the planning part: an AI agent looks at what your crew is into, finds three real places and events near you, and turns each into a small quest ("Everyone plays one round of pinball, one Guitar Hero song and one retro cabinet. Lowest score buys the fries."). You vote, you go, you snap a photo to prove you pulled up, and at the end you get a recap card made for Instagram Stories.
 
-## Setup (everyone)
+Try it at **[pull-up.tech](https://pull-up.tech)**. Built at HackTX 2026.
+
+## How it works
+
+1. **Make a crew.** Pick a few vibes (games, live music, cheap eats…) and send the invite link. Friends join with one tap, no accounts or passwords.
+2. **Pull up.** An agent searches Google Maps and Google Events for places that fit the whole crew, checks they're open, and proposes three quests with a hook, cost and time estimate.
+3. **Vote.** The first quest to win a majority (or the top pick after 24 hours) becomes this week's quest.
+4. **Go and prove it.** Upload a photo from the place. A vision model checks it matches the quest and writes a caption. When it isn't sure, any other crew member can approve it.
+5. **Recap.** Every photo since your last recap becomes a 1080×1920 collage with an AI-written title and captions that tell the story, ready to share.
+
+Weekly streaks and totals keep the crew coming back.
+
+## Optional extras
+
+The crew's creator can turn each of these on or off at any time:
+
+- **⚡ Pull Up Now.** "We have 2 hours and $20, near campus": three places that are open right now, within a 20-minute walk. One tap starts it.
+- **🧭 Fair meetup.** Everyone sets a starting area. Each proposal shows every member's walking or transit time, and flags anyone stuck with a 40+ minute trip.
+- **🤫 Secret roles.** When a quest starts, each member gets a private mission ("Get your initials on one high-score board"). The roles are revealed on the recap.
+- **🎯 Photo bingo.** Five photo prompts per quest, checked off live as photos come in, with Google Lens fun facts about what you photographed.
+
+## Built with
+
+| Piece | What we use |
+|---|---|
+| App | Next.js 15 (App Router), React 19, Tailwind CSS 4, a mobile-first installable web app |
+| AI | Meta's Muse Spark through its OpenAI-compatible API: a tool-using quest agent, the photo checker, and recap writing |
+| Places and events | SerpApi: Google Maps, Google Events, Maps Directions and Google Lens |
+| Database | Postgres on Tiger Cloud (TimescaleDB) with Drizzle ORM. Crew activity is a hypertable, and weekly stats come from a continuous aggregate |
+| Photos | S3-compatible Vultr Object Storage with signed URLs; recap cards drawn with sharp |
+| Hosting | A Vultr VM running pm2 behind Caddy |
+
+## Run it yourself
+
+You need Node 20+, a Postgres database with the TimescaleDB extension, an S3-compatible bucket, a SerpApi key, and an OpenAI-compatible model API.
 
 ```bash
+git clone https://github.com/Goldenwind9/Pull-Up.git && cd Pull-Up
 npm install
-cp .env.example .env      # paste the real keys from the team's private note
-npm run dev               # http://localhost:3000
+cp .env.example .env    # fill in your keys (each one is explained in the file)
+npm run db:migrate
+npm run smoke           # checks that every key works
+npm run dev             # http://localhost:3000
 ```
+
+Useful settings in `.env`:
+
+- `PROOF_CHECK`: `strict` (the photo must match the quest and place), `lenient` (for testing away from the place) or `off`.
+- `DEMO_MODE=true`: replays saved SerpApi answers instead of making live calls.
+- `COMPLETE_DEMO_MODE=true`: a fully scripted demo with no AI or SerpApi calls (see below).
+
+### Scripts
 
 | Command | What it does |
 |---|---|
-| `npm run dev` | Run the app locally |
-| `npm run lint` | Check code style |
-| `npm run build` | Production build (run before pushing big changes) |
-| `npm run db:migrate` | Create the tables in Tiger Cloud (needs `DATABASE_URL`) |
-| `npm run db:generate` | After editing `lib/db/schema.ts`, make a new migration |
-| `npm run db:studio` | Browse the database in your browser |
-| `npm run smoke` | Check that every key works (Tiger, Muse, SerpApi, storage) |
-| `npm run seed` | Add the demo crew with 3 weeks of history |
-| `npm run db:clean` | Show test data to delete (every crew but the demo, users in no crew, their stored photos); add `-- --yes` to delete |
+| `npm run dev` / `npm run build` / `npm start` | Develop, build, and serve in production |
+| `npm run lint` | Lint |
+| `npm run db:migrate` / `db:generate` / `db:studio` | Apply migrations, create one after editing `lib/db/schema.ts`, browse the data |
+| `npm run seed` | Create a demo crew at `/j/demo` with three weeks of history and a recap |
+| `npm run db:clean` | List test data to delete (add `-- --yes` to delete it) |
+| `npm run recap:folder -- <folder>` | Make a recap card from any folder of photos, no database needed |
 
-## File structure
+Tests run against the real services and clean up after themselves: `npx tsx scripts/test-voting.ts`, `scripts/test-recap.ts`, `scripts/test-proof-modes.ts` and `scripts/test-hours.ts` (offline).
+
+### Scripted demo
+
+With `COMPLETE_DEMO_MODE=true`, every step plays out the same way each time, from `lib/demo.ts`. Vibes come pre-picked and **Pull up** always offers the same three quests. The first vote always starts the Arcade Gauntlet at Cidercade Austin, and roles and bingo prompts are fixed. The five photos in `Demo/Photos` are recognized when uploaded, even after re-encoding, and each fills in its own bingo square. It's handy for live presentations, or anywhere the APIs aren't reachable.
+
+## Project layout
+
 ```
-Pull-Up/
-├── .next/                   # Autogenerated by nexJS
-├── app/                     # URL Routers/Controllers
-├── deploy/                  # Initial config files run on startup
-├── drizzle/                 # Database files using drizzle ORM 
-├── lib/                     # Main source code
-├── scripts/                 # One time scripts for maintenance
-├── ASSUMPTIONS.MD           # List of things we initially assumed to write codebase
-└── README.md                # Project overview and documentation
+app/          pages, components and API routes (app/api/)
+lib/agents/   quest agent, photo checker, recap writer, roles and bingo
+lib/prompts/  every model prompt, in one place
+lib/services/ crews, quests and voting, proofs, recaps (the business logic)
+lib/recap/    recap card rendering
+lib/db/       Drizzle schema;  drizzle/  migrations
+scripts/      seed, cleanup, smoke and test scripts
+deploy/       pm2 and Caddy configs
 ```
 
+[`ASSUMPTIONS.md`](ASSUMPTIONS.md) records the product and technical decisions we made along the way, and why.
 
-## Who owns what
+## Deploy
 
-| Folder / file | Owner |
-|---|---|
-| `app/` pages and forms, `app/manifest.ts` | Frontend |
-| `lib/ai.ts`, `lib/agents/`, `lib/prompts/` | AI |
-| `lib/db/`, `drizzle/`, `lib/serp.ts`, `lib/storage.ts`, `lib/services/`, `scripts/` | Data |
-| `deploy/`, `app/api/connector/`, server, domain, pitch | Infra |
-| `app/api/` routes | Whoever builds that feature |
-
-Look for `TODO(Frontend)`, `TODO(AI)`, `TODO(Data)` comments to find your next task.
-
-## What works now
-
-The whole demo story, end to end:
-
-- Landing page creates a crew, with the creator's vibe chips (`POST /api/crews`)
-- `/j/CODE` join page with vibe chips (`POST /api/crews/[id]/join`)
-- Crew home `/c/[id]`: Share invite, streak and totals, **Pull up** (quest agent, `POST /api/crews/[id]/generate`), voting (`POST /api/quests/[id]/vote`), active quest card with a Google Maps link, **We pulled up** photo upload + AI check (`POST /api/quests/[id]/proof`), photo feed with **Approve** for unsure photos (`POST /api/proofs/[id]/approve`)
-- Crew screens use a bottom tab bar: Quest, Now, Feed, Recap, Crew. The four extras below are optional: the creator picks them under "✨ Extras" when making the crew and can change them in the Crew tab (`POST /api/crews/[id]/features`)
-- **⚡ Pull Up Now**: "2 hours, $20, near campus" → 3 places open right now within a 20-min walk; one tap starts it (`POST /api/crews/[id]/now`, `/api/quests/[id]/start`, `/api/quests/[id]/drop`)
-- **🧭 Fair meetup**: each member sets a starting area (`POST /api/crews/[id]/start-area`); weekly proposals show everyone's trip time (SerpApi Directions) and flag 40+ min trips
-- **🤫 Secret roles** dealt when a quest starts, each member sees only theirs; revealed on the recap page
-- **🎯 Photo bingo**: 5 prompts per quest, checked off live by the photo checker; Google Lens fun facts on photos
-- Recap `/c/[id]/recap`: **Make recap** (`POST /api/crews/[id]/recap`) builds a collage of every photo since the last recap, with AI title and captions; **Share** to Instagram Stories / WhatsApp
-- `npm run seed`: demo crew at **/j/demo** with 3 weeks of history and a first recap
-- `GET /api/health`
-
-Still missing: the Muse connector (`app/api/connector/`, returns 501), PWA icons, and the `DEMO_MODE` AI fallback.
-
-## Demo checklist
-
-1. `npm run seed` (about 15 s, rebuilds the recap). Optional: put 3 real photos in `scripts/demo-photos/` first.
-2. On a phone, open `/j/demo`, pick a name and vibes.
-3. Tap **Pull up** (20 to 60 s), vote, then upload a photo on the active quest. Not at the place? Set `PROOF_CHECK=lenient` (or `off`) in `.env` and restart.
-4. Open **Recap**: **New recap from newer photos** adds the photo you just took. Then **Share**.
-
-Test scripts (use the real database, clean up after themselves): `npx tsx scripts/test-voting.ts [--agent]`, `npx tsx scripts/test-recap.ts`, `npx tsx scripts/test-proof-modes.ts [photo.jpg]` (AI only, no database). `npx tsx scripts/test-hours.ts` checks the opening-hours parser (no network). `npm run recap:folder -- <folder>` makes a recap card from any folder of photos (no database).
-
-## Scripted judging demo
-
-Set `COMPLETE_DEMO_MODE=true` in `.env` and restart. Everything is scripted in `lib/demo.ts`, with no AI or SerpApi calls, so it works even where the model API is blocked:
-
-1. Landing page: vibe chips are pre-picked. Make the crew; judges join with the invite link (also pre-picked).
-2. **Pull up** → 3 quests (Arcade Gauntlet at Cidercade, Vinyl Roulette, Mural Hunt). Any vote starts the Arcade Gauntlet.
-3. Roles are dealt in join order: High Score Hunter, Critic, Rockstar, Photographer, Hype Person, Wildcard.
-4. Upload the 5 photos from `Demo/Photos` (any order): each checks off its bingo square with a caption and fun fact → BINGO.
-5. **Recap** → "Cidercade Champions", with the roles revealed.
-
-`Demo/Photos` must be on the server too (the photos are matched by how they look, not file name).
-
-## Deploy (Infra)
-
-On the Vultr server (Ubuntu, Node 20+, pm2, Caddy installed):
+On an Ubuntu server with Node 20+, pm2 and Caddy:
 
 ```bash
-git clone git@github.com:Goldenwind9/Pull-Up.git && cd Pull-Up
-cp .env.example .env   # fill in
+git clone https://github.com/Goldenwind9/Pull-Up.git && cd Pull-Up
+cp .env.example .env    # fill in
 npm ci && npm run build
 pm2 start deploy/ecosystem.config.cjs && pm2 save
 sudo cp deploy/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
 ```
 
-Point an **A record** for `pull-up.tech` (and `www`) at the server's IP in the domain registrar.
-
-## Rules
-
-- Never commit `.env` or any key.
-- Small branches, merge to `main` often.
-- Stay in your own folders when you can.
+Then point your domain's A record at the server. Caddy handles HTTPS.
