@@ -1,33 +1,98 @@
-// Renders the final 1080x1920 recap card. Pure image work: no network, no database.
+// Renders the final 1080x1920 recap card: a collage of the crew's real photos. Pure image work.
 import sharp from "sharp";
 
 export const CARD_WIDTH = 1080;
 export const CARD_HEIGHT = 1920;
+export const MAX_TILES = 9;
 
 const MARGIN = 40;
 const GAP = 20;
 const HEADER_H = 270;
-const PANEL_W = (CARD_WIDTH - 2 * MARGIN - GAP) / 2; // 490
-const PANEL_H = 690;
-const FOOTER_Y = HEADER_H + 2 * PANEL_H + GAP; // 1670
+const FOOTER_Y = 1670;
+const GRID_W = CARD_WIDTH - 2 * MARGIN; // 1000
+const GRID_H = FOOTER_Y - HEADER_H; // 1400
 const RADIUS = 28;
 
 const BG = "#15131f";
 const ACCENT = "#ffd23f";
-// Needs a real font on the machine that runs this (see notes below the code).
+// Needs a real font on the machine that runs this (on Ubuntu: sudo apt install fonts-dejavu-core).
 const FONT = "DejaVu Sans, Helvetica, Arial, sans-serif";
-const PLACEHOLDER_COLORS = ["#ff6b6b", "#4ecdc4", "#a78bfa", "#fbbf24"];
-// Average glyph width as a fraction of font size for a bold sans font. Used to estimate wrapping.
-const AVG_CHAR_EM = 0.58;
+const PLACEHOLDER_COLORS = ["#ff6b6b", "#4ecdc4", "#a78bfa", "#fbbf24", "#60a5fa", "#fb923c"];
+// Rough glyph widths for bold DejaVu Sans, as a fraction of font size. Used to estimate
+// wrapping. One flat average underestimates capitals and wide letters, which ran off the card.
+const NARROW = /[iljIJ.,:;'!|()[\]]/;
+const SEMI = /[frt\-"]/;
+const WIDE_LOWER = /[mw]/;
+const WIDE_UPPER = /[MW@%]/;
 
-export type CardPanel = { image: Buffer | null; dialogue: string };
+function charEm(ch: string): number {
+  if (ch === " ") return 0.35;
+  if (NARROW.test(ch)) return 0.34;
+  if (SEMI.test(ch)) return 0.47;
+  if (WIDE_LOWER.test(ch)) return 1.0;
+  if (WIDE_UPPER.test(ch)) return 1.04;
+  if (/[A-Z]/.test(ch)) return 0.78;
+  if (/[0-9]/.test(ch)) return 0.7;
+  return 0.66;
+}
+
+/** Estimated rendered width of `text` in px. */
+function textWidth(text: string, size: number, letterSpacing = 0): number {
+  let em = 0;
+  for (const ch of text) em += charEm(ch);
+  return em * size + letterSpacing * text.length;
+}
+
+/** How many characters of this kind of text fit on one line of `maxWidth` px. */
+function charsPerLine(text: string, maxWidth: number, size: number): number {
+  const avgEm = text.length ? textWidth(text, 1) / text.length : 0.66;
+  return Math.max(1, Math.floor(maxWidth / (size * avgEm)));
+}
+
+// How many photos go in each row, by photo count.
+const ROW_SPECS: Record<number, number[]> = {
+  1: [1],
+  2: [1, 1],
+  3: [1, 2],
+  4: [2, 2],
+  5: [2, 3],
+  6: [3, 3],
+  7: [2, 2, 3],
+  8: [2, 3, 3],
+  9: [3, 3, 3],
+};
+export type CardTile = { image: Buffer | null; caption: string };
 export type CardContent = {
   title: string;
   crewName: string;
   periodLabel: string;
   stats: { questsDone: number; photos: number; votes: number };
-  panels: CardPanel[]; // exactly 4
+  tiles: CardTile[]; // 1 to MAX_TILES
 };
+
+type Rect = { x: number; y: number; w: number; h: number };
+
+export function tileLayout(count: number): Rect[] {
+  const rows = ROW_SPECS[count];
+  if (!rows) throw new Error(`Collage supports 1 to ${MAX_TILES} photos, got ${count}`);
+  const rowH = Math.floor((GRID_H - GAP * (rows.length - 1)) / rows.length);
+  const rects: Rect[] = [];
+  rows.forEach((cols, r) => {
+    const colW = Math.floor((GRID_W - GAP * (cols - 1)) / cols);
+    for (let c = 0; c < cols; c++) {
+      rects.push({ x: MARGIN + c * (colW + GAP), y: HEADER_H + r * (rowH + GAP), w: colW, h: rowH });
+    }
+  });
+  return rects;
+}
+
+/**
+ * Caption length that fits each tile in 3 lines, in words, for a collage of `count` photos.
+ * Matches the caption font sizes below; the recap prompt passes these to the model.
+ */
+export function captionWordBudgets(count: number): number[] {
+  return tileLayout(count).map((r) => (r.w >= 600 ? 12 : r.w >= 400 ? 9 : 6));
+}
 
 // ---------- text helpers ----------
 
@@ -87,89 +152,127 @@ function clampLines(lines: string[], maxLines: number, maxChars: number): string
 /** Largest font size (from `sizes`, descending) whose wrapped text fits in `maxLines`; truncates at the smallest. */
 function fitText(text: string, maxWidth: number, maxLines: number, sizes: number[]) {
   for (const size of sizes) {
-    const lines = wrapLines(text, Math.floor(maxWidth / (size * AVG_CHAR_EM)));
+    const lines = wrapLines(text, charsPerLine(text, maxWidth, size));
     if (lines.length <= maxLines) return { size, lines };
   }
   const size = sizes[sizes.length - 1];
-  const maxChars = Math.floor(maxWidth / (size * AVG_CHAR_EM));
+  const maxChars = charsPerLine(text, maxWidth, size);
   return { size, lines: clampLines(wrapLines(text, maxChars), maxLines, maxChars) };
 }
 
-// ---------- panels ----------
+/**
+ * The title must sit between the crew name and the photo grid. One line can be big;
+ * two lines only fit the header at 60 px or less (bigger ran into the first photo).
+ */
+function fitTitle(text: string) {
+  const oneLine = fitText(text, GRID_W, 1, [84, 72, 64]);
+  if (oneLine.lines.length === 1 && !oneLine.lines[0].endsWith("…")) return oneLine;
+  const twoLines = fitText(text, GRID_W, 2, [60, 52, 46]);
+  return twoLines.lines.length === 2 && !twoLines.lines[1].endsWith("…")
+    ? { size: twoLines.size, lines: balanceLines(text, charsPerLine(text, GRID_W, twoLines.size)) ?? twoLines.lines }
+    : twoLines;
+}
 
-const ROUND_MASK = Buffer.from(
-  `<svg width="${PANEL_W}" height="${PANEL_H}" xmlns="http://www.w3.org/2000/svg">` +
-    `<rect width="${PANEL_W}" height="${PANEL_H}" rx="${RADIUS}" ry="${RADIUS}" fill="#fff"/></svg>`,
-);
+/** Splits at the word break that makes two lines closest in length, so one word isn't left alone. */
+function balanceLines(text: string, maxChars: number): string[] | null {
+  const words = text.split(" ");
+  let best: string[] | null = null;
+  for (let i = 1; i < words.length; i++) {
+    const lines = [words.slice(0, i).join(" "), words.slice(i).join(" ")];
+    if (lines.some((line) => line.length > maxChars)) continue;
+    const diff = Math.abs(lines[0].length - lines[1].length);
+    if (!best || diff < Math.abs(best[0].length - best[1].length)) best = lines;
+  }
+  return best;
+}
 
-function framePanel(source: Buffer): Promise<Buffer> {
+/** Single line, letter-spaced: shrink until it fits, then truncate. */
+function fitOneLine(text: string, maxWidth: number, sizes: number[], letterSpacing: number) {
+  for (const size of sizes) {
+    if (textWidth(text, size, letterSpacing) <= maxWidth) return { size, line: text };
+  }
+  const size = sizes[sizes.length - 1];
+  let line = text;
+  while (line.length > 1 && textWidth(`${line}…`, size, letterSpacing) > maxWidth) line = line.slice(0, -1);
+  return { size, line: line === text ? line : `${line.trimEnd()}…` };
+}
+
+// ---------- tiles ----------
+
+function roundedMask(w: number, h: number): Buffer {
+  return Buffer.from(
+    `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">` +
+      `<rect width="${w}" height="${h}" rx="${RADIUS}" ry="${RADIUS}" fill="#fff"/></svg>`,
+  );
+}
+
+function frameTile(source: Buffer, rect: Rect): Promise<Buffer> {
   return sharp(source)
-    .resize(PANEL_W, PANEL_H, { fit: "cover", position: sharp.strategy.attention })
+    .rotate() // apply the camera's rotation flag, or portrait phone photos come out sideways
+    .resize(rect.w, rect.h, { fit: "cover", position: sharp.strategy.attention })
     .ensureAlpha()
-    .composite([{ input: ROUND_MASK, blend: "dest-in" }])
+    .composite([{ input: roundedMask(rect.w, rect.h), blend: "dest-in" }])
     .png()
     .toBuffer();
 }
 
-function placeholderPanel(index: number): Promise<Buffer> {
+function placeholderTile(index: number, rect: Rect): Promise<Buffer> {
   const color = PLACEHOLDER_COLORS[index % PLACEHOLDER_COLORS.length];
   const svg =
-    `<svg width="${PANEL_W}" height="${PANEL_H}" xmlns="http://www.w3.org/2000/svg">` +
+    `<svg width="${rect.w}" height="${rect.h}" xmlns="http://www.w3.org/2000/svg">` +
     `<rect width="100%" height="100%" fill="${color}"/>` +
-    `<circle cx="${PANEL_W * 0.7}" cy="${PANEL_H * 0.3}" r="140" fill="#fff" fill-opacity="0.25"/>` +
-    `<circle cx="${PANEL_W * 0.25}" cy="${PANEL_H * 0.55}" r="90" fill="#000" fill-opacity="0.12"/></svg>`;
+    `<circle cx="${rect.w * 0.7}" cy="${rect.h * 0.3}" r="${Math.min(rect.w, rect.h) * 0.25}" fill="#fff" fill-opacity="0.25"/>` +
+    `<circle cx="${rect.w * 0.25}" cy="${rect.h * 0.6}" r="${Math.min(rect.w, rect.h) * 0.16}" fill="#000" fill-opacity="0.12"/></svg>`;
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
-async function preparePanel(image: Buffer | null, index: number): Promise<Buffer> {
+async function prepareTile(image: Buffer | null, index: number, rect: Rect): Promise<Buffer> {
   if (image) {
     try {
-      return await framePanel(image);
+      return await frameTile(image, rect);
     } catch (error) {
-      console.warn(`[recap] panel ${index + 1} image undecodable, using placeholder:`, error);
+      console.warn(`[recap] photo ${index + 1} undecodable, using placeholder:`, error);
     }
   }
-  return framePanel(await placeholderPanel(index));
+  return frameTile(await placeholderTile(index, rect), rect);
 }
 
 // ---------- overlay (all text, borders, caption boxes in one SVG) ----------
 
-const panelOrigin = (i: number) => ({
-  x: MARGIN + (i % 2) * (PANEL_W + GAP),
-  y: HEADER_H + Math.floor(i / 2) * (PANEL_H + GAP),
-});
-
-function buildOverlay(content: CardContent): string {
+function buildOverlay(content: CardContent, rects: Rect[]): string {
   const out: string[] = [];
   const centerX = CARD_WIDTH / 2;
   const text = (x: number, y: number, size: number, fill: string, body: string, extra = "") =>
     `<text x="${x}" y="${y}" font-family="${FONT}" font-size="${size}" font-weight="700" fill="${fill}" text-anchor="middle" ${extra}>${escapeXml(body)}</text>`;
 
   // Header
-  out.push(text(centerX, 84, 34, ACCENT, sanitize(content.crewName).toUpperCase().slice(0, 40), 'letter-spacing="4"'));
-  const title = fitText(sanitize(content.title), CARD_WIDTH - 2 * MARGIN, 2, [84, 72, 60]);
+  const crew = fitOneLine(sanitize(content.crewName).toUpperCase(), GRID_W, [34, 30, 26, 22], 4);
+  out.push(text(centerX, 84, crew.size, ACCENT, crew.line, 'letter-spacing="4"'));
+  const title = fitTitle(sanitize(content.title));
+  // One line sits a little lower so it's centered in the space left in the header.
+  const titleTop = title.lines.length === 1 ? 118 : 104;
   title.lines.forEach((line, i) => {
-    out.push(text(centerX, 104 + title.size + i * title.size * 1.1, title.size, "#fff", line));
+    out.push(text(centerX, titleTop + title.size + i * title.size * 1.1, title.size, "#fff", line));
   });
 
-  // Panels: border + dialogue box
-  content.panels.forEach((panel, i) => {
-    const { x, y } = panelOrigin(i);
+  // Tiles: border + caption box
+  content.tiles.forEach((tile, i) => {
+    const r = rects[i];
     out.push(
-      `<rect x="${x}" y="${y}" width="${PANEL_W}" height="${PANEL_H}" rx="${RADIUS}" ry="${RADIUS}" fill="none" stroke="#fff" stroke-width="6"/>`,
+      `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="${RADIUS}" ry="${RADIUS}" fill="none" stroke="#fff" stroke-width="6"/>`,
     );
-    const size = 30;
-    const lineH = 38;
-    const maxChars = Math.floor((PANEL_W - 32 - 40) / (size * AVG_CHAR_EM));
-    const lines = clampLines(wrapLines(sanitize(panel.dialogue), maxChars), 4, maxChars);
+    const size = r.w >= 600 ? 34 : r.w >= 400 ? 30 : 24;
+    const lineH = Math.round(size * 1.27);
+    const maxChars = charsPerLine(sanitize(tile.caption), r.w - 32 - 40, size);
+    const lines = clampLines(wrapLines(sanitize(tile.caption), maxChars), 3, maxChars);
     if (lines.length === 0) return;
     const boxH = lines.length * lineH + 32;
-    const boxY = y + PANEL_H - 16 - boxH;
+    const boxY = r.y + r.h - 16 - boxH;
     out.push(
-      `<rect x="${x + 16}" y="${boxY}" width="${PANEL_W - 32}" height="${boxH}" rx="20" ry="20" fill="#000" fill-opacity="0.72"/>`,
+      `<rect x="${r.x + 16}" y="${boxY}" width="${r.w - 32}" height="${boxH}" rx="20" ry="20" fill="#000" fill-opacity="0.72"/>`,
     );
     lines.forEach((line, j) => {
-      out.push(text(x + PANEL_W / 2, boxY + 16 + 28 + j * lineH, size, "#fff", line));
+      out.push(text(r.x + r.w / 2, boxY + 16 + Math.round(size * 0.95) + j * lineH, size, "#fff", line));
     });
   });
 
@@ -191,18 +294,13 @@ function buildOverlay(content: CardContent): string {
 // ---------- public API ----------
 
 export async function renderRecapCard(content: CardContent): Promise<Buffer> {
-  if (content.panels.length !== 4) {
-    throw new Error(`Recap card needs exactly 4 panels, got ${content.panels.length}`);
-  }
-  const framed = await Promise.all(content.panels.map((p, i) => preparePanel(p.image, i)));
+  const rects = tileLayout(content.tiles.length); // throws for 0 or more than MAX_TILES
+  const framed = await Promise.all(content.tiles.map((t, i) => prepareTile(t.image, i, rects[i])));
 
-  // Panels first, then one SVG on top holding all text, borders and dialogue boxes.
+  // Photos first, then one SVG on top holding all text, borders and caption boxes.
   const layers = [
-    ...framed.map((input, i) => {
-      const { x, y } = panelOrigin(i);
-      return { input, left: x, top: y };
-    }),
-    { input: Buffer.from(buildOverlay(content)), left: 0, top: 0 },
+    ...framed.map((input, i) => ({ input, left: rects[i].x, top: rects[i].y })),
+    { input: Buffer.from(buildOverlay(content, rects)), left: 0, top: 0 },
   ];
 
   return sharp({ create: { width: CARD_WIDTH, height: CARD_HEIGHT, channels: 4, background: BG } })

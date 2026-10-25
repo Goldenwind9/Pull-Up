@@ -6,7 +6,7 @@
 // - This week is left empty so "Pull up" works live on stage.
 // - Photos: the files in scripts/demo-photos/ (sorted, one per week), else a
 //   generated placeholder card.
-// - Builds this month's recap at the end (about a minute of AI calls).
+// - Builds the crew's first recap at the end (a photo collage, about 15 seconds of AI).
 //   `npm run seed -- --no-recap` skips it.
 import "dotenv/config";
 import { randomUUID } from "node:crypto";
@@ -195,12 +195,14 @@ async function demoPhotos(): Promise<Buffer[]> {
   }
 }
 
+// Square, with the text kept small and centered: the recap collage crops photos to
+// portrait or landscape tiles, which cut off wider text.
 function placeholderPhoto(title: string, color: string) {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900">
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200">
     <rect width="100%" height="100%" fill="${color}"/>
-    <text x="50%" y="45%" font-size="160" text-anchor="middle">📸</text>
-    <text x="50%" y="70%" font-size="72" font-family="sans-serif" font-weight="bold"
-      fill="#f8e6a0" stroke="#2e5aa7" stroke-width="3" text-anchor="middle">${title}</text>
+    <text x="50%" y="46%" font-size="150" text-anchor="middle">📸</text>
+    <text x="50%" y="58%" font-size="52" font-family="sans-serif" font-weight="bold"
+      fill="#f8e6a0" stroke="#2e5aa7" stroke-width="2" text-anchor="middle">${title}</text>
   </svg>`;
   return sharp(Buffer.from(svg)).jpeg({ quality: 85 }).toBuffer();
 }
@@ -309,7 +311,7 @@ async function main() {
   await db.execute(sql`CALL refresh_continuous_aggregate('crew_weekly', NULL, time_bucket('7 days', now()))`);
 
   if (!process.argv.includes("--no-recap")) {
-    console.log("Building this month's recap (about a minute)…");
+    console.log("Building the recap (about 15 seconds)…");
     const { makeRecap } = await import("@/lib/services/recaps");
     await makeRecap(crew.id, users[0].id);
     console.log("Recap ready");

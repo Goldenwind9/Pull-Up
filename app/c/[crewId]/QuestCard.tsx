@@ -15,6 +15,7 @@ function mapsUrl(q: Quest) {
 
 const RESULT = {
   pass: { color: "bg-sky", title: "Quest complete! 🎉" },
+  bonus: { color: "bg-sky", title: "Added to the crew's memories! 📸" },
   unsure: { color: "bg-sun", title: "The AI isn't sure 🤔 Get a crewmate to tap Approve below." },
   fail: { color: "bg-white", title: "Hmm, that doesn't look like it 😅 Try another photo." },
 };
@@ -93,8 +94,8 @@ export default function QuestCard({ quest }: { quest: Quest }) {
         </button>
         {error && <p className="mt-3 animate-shake font-semibold text-red-600">{error}</p>}
         {result && (
-          <div className={`sticker mt-4 animate-pop p-4 text-left ${RESULT[result.verdict].color}`}>
-            <p className="font-bold">{RESULT[result.verdict].title}</p>
+          <div className={`sticker mt-4 animate-pop p-4 text-left ${(result.confidence === null ? RESULT.bonus : RESULT[result.verdict]).color}`}>
+            <p className="font-bold">{(result.confidence === null ? RESULT.bonus : RESULT[result.verdict]).title}</p>
             {result.caption && <p className="mt-2 text-lg italic">“{result.caption}”</p>}
             {result.verdict !== "pass" && result.reason && <p className="mt-2 text-sm">{result.reason}</p>}
           </div>

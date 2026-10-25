@@ -1,16 +1,16 @@
 "use client";
-// Recap card + "Make recap" + Share. Share sends the image file itself, so it can go
-// straight to Instagram Stories or WhatsApp from the phone's share sheet.
+// Recap card + "Make recap" + Share. A recap is a collage of every photo since the last
+// recap. Share sends the image file itself, so it can go straight to Instagram Stories
+// or WhatsApp from the phone's share sheet.
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { post } from "@/app/lib/post";
 
 const LOADING_LINES = [
-  "Writing the script…",
-  "Drawing panel 1…",
-  "Inking the outlines…",
-  "Adding speech bubbles…",
-  "Laying out the comic…",
+  "Picking your best shots…",
+  "Writing the captions…",
+  "Finding the running jokes…",
+  "Laying out the collage…",
 ];
 
 export default function RecapView({
@@ -30,7 +30,7 @@ export default function RecapView({
 
   useEffect(() => {
     if (!making) return;
-    const timer = setInterval(() => setLine((l) => (l + 1) % LOADING_LINES.length), 6000);
+    const timer = setInterval(() => setLine((l) => (l + 1) % LOADING_LINES.length), 3500);
     return () => clearInterval(timer);
   }, [making]);
 
@@ -70,23 +70,23 @@ export default function RecapView({
       {imageUrl ? (
         <div className="sticker animate-bounce-in overflow-hidden bg-white">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={imageUrl} alt={`${crewName} monthly comic`} className="w-full" />
+          <img src={imageUrl} alt={`${crewName} recap`} className="w-full" />
         </div>
       ) : (
         !making && (
           <div className="sticker animate-bounce-in rotate-1 bg-sky p-6 text-center text-lg">
-            No comic yet this month. Make one! 💥
+            No recap yet. Make one from your quest photos! 📸
           </div>
         )
       )}
 
       {making && (
         <div className="sticker bg-white p-6 text-center">
-          <span className="inline-block animate-spin-slow text-5xl">🎨</span>
+          <span className="inline-block animate-spin-slow text-5xl">📸</span>
           <p key={line} className="mt-3 animate-pop text-lg font-semibold">
             {LOADING_LINES[line]}
           </p>
-          <p className="mt-1 text-sm">This takes about a minute.</p>
+          <p className="mt-1 text-sm">This takes about 20 seconds.</p>
         </div>
       )}
 
@@ -96,7 +96,7 @@ export default function RecapView({
         </button>
       )}
       <button onClick={make} disabled={making} className="btn bg-white px-6 py-3 text-lg disabled:opacity-60">
-        {making ? "Making your comic…" : imageUrl ? "Remake this month's comic 🔄" : "Make recap 💥"}
+        {making ? "Making your recap…" : imageUrl ? "New recap from newer photos 🔄" : "Make recap 📸"}
       </button>
       {error && <p className="animate-shake text-center font-semibold text-red-600">{error}</p>}
     </section>

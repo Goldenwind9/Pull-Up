@@ -29,8 +29,9 @@ async function completeQuest(crewId: string, questId: string, userId: string) {
 }
 
 /**
- * Stores the photo, runs the photo checker, saves the proof and, on a pass,
- * completes the quest. Extra photos after the quest is done still get a caption (B28).
+ * Stores the photo, runs the photo checker, saves the proof and, on a pass, completes the quest.
+ * Only photos that could complete the quest are checked. Once it's done, later photos are
+ * accepted from anywhere and just get a caption, so the crew can keep the memories coming (B28).
  */
 export async function submitProof(questId: string, userId: string, photo: Buffer): Promise<Proof> {
   const [quest] = await db.select().from(schema.quests).where(eq(schema.quests.id, questId)).limit(1);
@@ -55,8 +56,12 @@ export async function submitProof(questId: string, userId: string, photo: Buffer
   const key = photoKey(quest.crewId, questId);
   // Lazy import: lib/ai throws at import time without AI_API_KEY.
   const { verifyProof } = await import("@/lib/agents/verifyProof");
+  const bonus = quest.status === "done";
   const [verdict] = await Promise.all([
-    verifyProof({ photo: jpeg, task: quest.task, proofHint: quest.proofHint, placeName: quest.placeName }),
+    verifyProof(
+      { photo: jpeg, task: quest.task, proofHint: quest.proofHint, placeName: quest.placeName },
+      bonus ? "off" : undefined,
+    ),
     putObject(key, jpeg, "image/jpeg"),
   ]);
 
@@ -67,8 +72,10 @@ export async function submitProof(questId: string, userId: string, photo: Buffer
       userId,
       photoKey: key,
       verdict: verdict.verdict,
-      confidence: verdict.confidence,
-      reason: verdict.reason,
+      // A bonus photo wasn't checked, so it has no confidence; the recap then prefers
+      // the photo that actually completed the quest when it has to pick one per quest.
+      confidence: bonus ? null : verdict.confidence,
+      reason: bonus ? "Bonus photo: the quest was already done, so it wasn't checked." : verdict.reason,
       caption: verdict.caption,
     })
     .returning();

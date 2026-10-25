@@ -38,7 +38,7 @@ export default async function CrewHome({ params }: { params: Promise<{ crewId: s
         <div className="mt-4 flex justify-center gap-3">
           <ShareButton url={home.crew.inviteLink} text={`Join ${home.crew.name} on PullUp 🎲`} />
           <Link href={`/c/${crewId}/recap`} className="btn bg-white px-4 py-2">
-            Comic 💥
+            Recap 📸
           </Link>
         </div>
       </header>

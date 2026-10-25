@@ -46,7 +46,7 @@ export default function Feed({ items }: { items: FeedItem[] }) {
                 <b>{p.userName}</b> · {p.questTitle}
               </span>
               <span className="rounded-full border-2 border-ink px-2 py-0.5 font-semibold">
-                {p.approved ? "👍 Crew approved" : BADGE[p.verdict]}
+                {p.approved ? "👍 Crew approved" : p.bonus ? "📸 Bonus" : BADGE[p.verdict]}
               </span>
             </div>
             {p.caption && <p className="mt-2 text-lg italic">“{p.caption}”</p>}

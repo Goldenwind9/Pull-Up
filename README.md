@@ -1,6 +1,6 @@
 # PullUp
 
-PullUp gives a friend group one AI-picked side quest at a real nearby place each week, checks a photo to confirm they did it, and turns the month into a comic. Live at **https://pull-up.tech**.
+PullUp gives a friend group one AI-picked side quest at a real nearby place each week, checks a photo to confirm they did it, and turns the crew's photos into a shareable recap card. Live at **https://pull-up.tech**.
 
 - Design: `PullUp Architecture.pdf`
 - Guesses we made before the questions were answered: [`ASSUMPTIONS.md`](ASSUMPTIONS.md). Read this first.
@@ -57,20 +57,20 @@ The whole demo story, end to end:
 - Landing page creates a crew, with the creator's vibe chips (`POST /api/crews`)
 - `/j/CODE` join page with vibe chips (`POST /api/crews/[id]/join`)
 - Crew home `/c/[id]`: Share invite, streak and totals, **Pull up** (quest agent, `POST /api/crews/[id]/generate`), voting (`POST /api/quests/[id]/vote`), active quest card with a Google Maps link, **We pulled up** photo upload + AI check (`POST /api/quests/[id]/proof`), photo feed with **Approve** for unsure photos (`POST /api/proofs/[id]/approve`)
-- Recap `/c/[id]/recap`: **Make recap** (`POST /api/crews/[id]/recap`), card image, **Share** to Instagram Stories / WhatsApp
-- `npm run seed`: demo crew at **/j/demo** with 3 weeks of history and this month's comic
+- Recap `/c/[id]/recap`: **Make recap** (`POST /api/crews/[id]/recap`) builds a collage of every photo since the last recap, with AI title and captions; **Share** to Instagram Stories / WhatsApp
+- `npm run seed`: demo crew at **/j/demo** with 3 weeks of history and a first recap
 - `GET /api/health`
 
 Still missing: the Muse connector (`app/api/connector/`, returns 501), PWA icons, and the `DEMO_MODE` AI fallback.
 
 ## Demo checklist
 
-1. `npm run seed` (about 40 s, rebuilds the comic). Optional: put 3 real photos in `scripts/demo-photos/` first.
+1. `npm run seed` (about 15 s, rebuilds the recap). Optional: put 3 real photos in `scripts/demo-photos/` first.
 2. On a phone, open `/j/demo`, pick a name and vibes.
 3. Tap **Pull up** (20 to 60 s), vote, then upload a photo on the active quest. Not at the place? Set `PROOF_CHECK=lenient` (or `off`) in `.env` and restart.
-4. Open **Comic**, then **Share**.
+4. Open **Recap**: **New recap from newer photos** adds the photo you just took. Then **Share**.
 
-Test scripts (use the real database, clean up after themselves): `npx tsx scripts/test-voting.ts [--agent]`, `npx tsx scripts/test-recap.ts`, `npx tsx scripts/test-proof-modes.ts [photo.jpg]` (AI only, no database).
+Test scripts (use the real database, clean up after themselves): `npx tsx scripts/test-voting.ts [--agent]`, `npx tsx scripts/test-recap.ts`, `npx tsx scripts/test-proof-modes.ts [photo.jpg]` (AI only, no database). `npm run recap:folder -- <folder>` makes a recap card from any folder of photos (no database).
 
 ## Deploy (Infra)
 

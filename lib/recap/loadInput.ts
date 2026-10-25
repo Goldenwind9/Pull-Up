@@ -1,11 +1,19 @@
-// Loads what the recap needs from the database: crew name, completed quests with
-// captions, and summed stats from crew_weekly.
-import { and, asc, eq, gte, isNotNull, lt, lte, or, sql } from "drizzle-orm";
+// Loads what the recap needs from the database.
+//
+// getRecapInput(crewId) returns the crew's UNUSED accepted photos:
+//   photos:   proofs where recap_id IS NULL AND the proof is accepted
+//             (verdict 'pass', or an 'unsure' a crewmate approved: approved_by is set).
+//             Several photos per quest are fine; the recap picks the best one per quest.
+//   crewName: crews.name
+//   stats:    questsDone = distinct quests among the photos, photos = number of photos,
+//             votes = 'voted' activity rows from the start of the earliest photo's quest week
+//             up to the latest photo, so the votes that picked those quests count.
+import { and, asc, count, eq, gte, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import type { RecapInput, RecapQuest } from "@/lib/agents/recap";
+import { TIMEZONE } from "@/lib/time";
+import type { RecapInput, RecapPhoto } from "@/lib/agents/recap";
 
-/** periodStart / periodEnd are inclusive YYYY-MM-DD dates. A quest counts in the period its completing photo was taken. */
-export async function getRecapInput(crewId: string, periodStart: string, periodEnd: string): Promise<RecapInput> {
+export async function getRecapInput(crewId: string): Promise<RecapInput> {
   const [crew] = await db
     .select({ name: schema.crews.name })
     .from(schema.crews)
@@ -13,54 +21,60 @@ export async function getRecapInput(crewId: string, periodStart: string, periodE
     .limit(1);
   if (!crew) throw new Error(`Crew ${crewId} not found`);
 
-  // Done quests with the photo that completed them (a pass, or an approved unsure).
   const rows = await db
     .select({
+      proofId: schema.proofs.id,
       questId: schema.quests.id,
-      title: schema.quests.title,
+      photoKey: schema.proofs.photoKey,
+      questTitle: schema.quests.title,
       placeName: schema.quests.placeName,
       caption: schema.proofs.caption,
-      at: schema.proofs.createdAt,
+      takenAt: schema.proofs.createdAt,
+      confidence: schema.proofs.confidence,
+      weekStart: schema.quests.weekStart,
     })
-    .from(schema.quests)
-    .innerJoin(schema.proofs, eq(schema.proofs.questId, schema.quests.id))
+    .from(schema.proofs)
+    .innerJoin(schema.quests, eq(schema.quests.id, schema.proofs.questId))
     .where(
       and(
         eq(schema.quests.crewId, crewId),
-        eq(schema.quests.status, "done"),
-        gte(schema.proofs.createdAt, sql`${periodStart}::date`),
-        lt(schema.proofs.createdAt, sql`${periodEnd}::date + interval '1 day'`),
+        isNull(schema.proofs.recapId),
         or(eq(schema.proofs.verdict, "pass"), isNotNull(schema.proofs.approvedBy)),
       ),
     )
     .orderBy(asc(schema.proofs.createdAt));
 
-  const quests = new Map<string, RecapQuest>();
-  for (const r of rows) {
-    if (quests.has(r.questId)) continue; // first completing photo wins
-    quests.set(r.questId, {
-      title: r.title,
-      placeName: r.placeName,
-      caption: r.caption,
-      completedAt: r.at.toISOString(),
-    });
+  const photos: RecapPhoto[] = rows.map((r) => ({
+    proofId: r.proofId,
+    questId: r.questId,
+    photoKey: r.photoKey,
+    questTitle: r.questTitle,
+    placeName: r.placeName,
+    caption: r.caption,
+    takenAt: r.takenAt.toISOString(),
+    confidence: r.confidence ?? 0,
+  }));
+
+  let votes = 0;
+  if (rows.length) {
+    const firstWeek = rows.map((r) => r.weekStart).sort()[0];
+    const [row] = await db
+      .select({ votes: count() })
+      .from(schema.activity)
+      .where(
+        and(
+          eq(schema.activity.crewId, crewId),
+          eq(schema.activity.kind, "voted"),
+          gte(schema.activity.time, sql`(${firstWeek}::date)::timestamp AT TIME ZONE ${TIMEZONE}`),
+          lte(schema.activity.time, rows[rows.length - 1].takenAt),
+        ),
+      );
+    votes = row.votes;
   }
 
-  const [stats] = await db
-    .select({
-      questsDone: sql<number>`coalesce(sum(${schema.crewWeekly.questsDone}), 0)::int`,
-      photos: sql<number>`coalesce(sum(${schema.crewWeekly.photos}), 0)::int`,
-      votes: sql<number>`coalesce(sum(${schema.crewWeekly.votes}), 0)::int`,
-    })
-    .from(schema.crewWeekly)
-    .where(
-      and(
-        eq(schema.crewWeekly.crewId, crewId),
-        // Weekly buckets that overlap the period, so a week straddling the 1st still counts.
-        gte(schema.crewWeekly.week, sql`${periodStart}::date - interval '6 days'`),
-        lte(schema.crewWeekly.week, sql`${periodEnd}::date`),
-      ),
-    );
-
-  return { crewName: crew.name, quests: [...quests.values()], stats };
+  return {
+    crewName: crew.name,
+    photos,
+    stats: { questsDone: new Set(rows.map((r) => r.questId)).size, photos: rows.length, votes },
+  };
 }

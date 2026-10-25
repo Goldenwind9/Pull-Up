@@ -1,4 +1,4 @@
-// Monthly recap comic + Share button. Owner: Frontend.
+// Recap photo collage + Share button. Owner: Frontend.
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
@@ -28,8 +28,8 @@ export default async function RecapPage({ params }: { params: Promise<{ crewId: 
         <Link href={`/c/${crewId}`} className="btn inline-block bg-white px-4 py-1 text-sm">
           ← {crew.name}
         </Link>
-        <BouncyTitle text="The Comic" className="mt-4 text-5xl" />
-        <p className="mt-2 text-lg">Your month, drawn by AI.</p>
+        <BouncyTitle text="The Recap" className="mt-4 text-5xl" />
+        <p className="mt-2 text-lg">Your best shots, captioned by AI.</p>
       </header>
       <RecapView crewId={crewId} crewName={crew.name} imageUrl={recap ? recapImageUrl(recap) : null} />
     </main>

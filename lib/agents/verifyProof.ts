@@ -2,7 +2,7 @@
 // Owner: AI. See "AI layer > Photo checker" in the architecture doc.
 import { z } from "zod";
 import sharp from "sharp";
-import { ai, MODEL, proofCheckMode } from "@/lib/ai";
+import { ai, MODEL, proofCheckMode, type ProofCheckMode } from "@/lib/ai";
 import { VERIFY_LENIENT_SYSTEM_PROMPT, VERIFY_SYSTEM_PROMPT, verifyProofUserPrompt } from "@/lib/prompts/verify";
 
 export const ProofVerdictSchema = z.object({
@@ -29,8 +29,8 @@ const FALLBACK: ProofVerdict = {
   caption: "The crew pulled up. Photo evidence pending!",
 };
 
-export async function verifyProof(input: VerifyProofInput): Promise<ProofVerdict> {
-  const mode = proofCheckMode();
+/** `mode` overrides PROOF_CHECK for this one photo (e.g. "off" for photos after the quest is done). */
+export async function verifyProof(input: VerifyProofInput, mode: ProofCheckMode = proofCheckMode()): Promise<ProofVerdict> {
   const verdict = await checkPhoto(input, mode === "strict" ? VERIFY_SYSTEM_PROMPT : VERIFY_LENIENT_SYSTEM_PROMPT);
   if (mode === "strict") return verdict;
   // Checking is off: keep the model's caption (or the fallback's), always pass.

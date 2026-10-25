@@ -63,6 +63,7 @@ export type FeedItem = {
   reason: string | null;
   verdict: "pass" | "unsure" | "fail";
   approved: boolean;
+  bonus: boolean; // added after the quest was done, so not checked
   mine: boolean;
   photoUrl: string;
   createdAt: string;
@@ -159,6 +160,7 @@ export async function getCrewHome(crewId: string, viewerId: string) {
       reason: proof.reason,
       verdict: proof.verdict,
       approved: Boolean(proof.approvedBy),
+      bonus: proof.verdict === "pass" && proof.confidence === null,
       mine: proof.userId === viewerId,
       photoUrl: await signedUrl(proof.photoKey),
       createdAt: proof.createdAt.toISOString(),

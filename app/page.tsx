@@ -17,7 +17,7 @@ const SAMPLE_QUESTS = [
 const STEPS = [
   { emoji: "🎲", title: "Pull up", body: "AI picks 3 quests at real spots nearby. Your crew votes.", color: "bg-sun", tilt: "-3deg" },
   { emoji: "📸", title: "Prove it", body: "Snap a pic. The AI checks it and roasts you with a caption.", color: "bg-sky", tilt: "2deg" },
-  { emoji: "💥", title: "Get the comic", body: "Your month becomes a comic. Drop it in the group chat.", color: "bg-white", tilt: "-1.5deg" },
+  { emoji: "💥", title: "Get the recap", body: "Your best shots become one story card. Drop it in the group chat.", color: "bg-white", tilt: "-1.5deg" },
 ];
 
 export default function Home() {

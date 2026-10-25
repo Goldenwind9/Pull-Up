@@ -1,15 +1,16 @@
-// Monthly recap comic. Owner: AI (pipeline in lib/agents/recap.ts) + Data (this file).
-import { and, desc, eq } from "drizzle-orm";
+// Recap photo collage. Owner: AI (pipeline in lib/agents/recap.ts) + Data (this file).
+// A recap uses every accepted photo since the crew's last recap; a crew can make many.
+import { randomUUID } from "node:crypto";
+import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { monthPeriod } from "@/lib/time";
-import { logActivity } from "./activity";
+import { ServiceError } from "./errors";
 
 export type Recap = typeof schema.recaps.$inferSelect;
 
 // Same idea as quest generation: a second tap waits on the running build.
 const inFlight = new Map<string, Promise<Recap>>();
 
-/** Builds (or rebuilds) this month's recap and saves one row per crew per month. */
+/** Builds a recap from the crew's unused photos and saves it. */
 export async function makeRecap(crewId: string, userId?: string): Promise<Recap> {
   const running = inFlight.get(crewId);
   if (running) return running;
@@ -19,23 +20,36 @@ export async function makeRecap(crewId: string, userId?: string): Promise<Recap>
 }
 
 async function buildAndSave(crewId: string, userId?: string): Promise<Recap> {
-  const { start, end } = monthPeriod();
-  // Lazy import: the recap pipeline pulls in sharp and the AI client.
-  const { buildRecap } = await import("@/lib/agents/recap");
-  const result = await buildRecap(crewId, start, end);
+  // Lazy imports: the recap pipeline pulls in sharp and the AI client.
+  const [{ buildRecap, NoPhotosError }, { saveRecap, RecapConflictError }] = await Promise.all([
+    import("@/lib/agents/recap"),
+    import("@/lib/recap/saveRecap"),
+  ]);
 
-  const recap = await db.transaction(async (tx) => {
-    // Rebuilding this month replaces the old row (B30).
-    await tx
-      .delete(schema.recaps)
-      .where(and(eq(schema.recaps.crewId, crewId), eq(schema.recaps.periodStart, start)));
-    const [row] = await tx
-      .insert(schema.recaps)
-      .values({ crewId, periodStart: start, periodEnd: end, script: result.script, imageKey: result.imageKey })
-      .returning();
-    return row;
-  });
-  await logActivity({ crewId, userId, kind: "recap_made", meta: { periodStart: start } });
+  const recapId = randomUUID();
+  try {
+    const result = await buildRecap(crewId, recapId);
+    await saveRecap({
+      recapId,
+      crewId,
+      periodStart: result.periodStart,
+      periodEnd: result.periodEnd,
+      script: result.script,
+      imageKey: result.imageKey,
+      proofIds: result.proofIds,
+      userId,
+    });
+  } catch (err) {
+    if (err instanceof NoPhotosError) {
+      throw new ServiceError("No new photos since your last recap. Go pull up somewhere!", 409);
+    }
+    if (err instanceof RecapConflictError) {
+      throw new ServiceError("Someone just made a recap with these photos. Refresh to see it.", 409);
+    }
+    throw err;
+  }
+
+  const [recap] = await db.select().from(schema.recaps).where(eq(schema.recaps.id, recapId));
   return recap;
 }
 

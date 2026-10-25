@@ -104,6 +104,8 @@ export const proofs = pgTable("proofs", {
   caption: text("caption"),
   // Added: set when a crew member taps Approve on an "unsure" photo.
   approvedBy: uuid("approved_by").references(() => users.id),
+  // Added: the recap this photo went into. Null = not used yet, so the next recap picks it up.
+  recapId: uuid("recap_id").references(() => recaps.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
