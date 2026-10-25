@@ -11,7 +11,7 @@ Status key: **Assumed** = guessed, not confirmed yet. **Decided** = the team agr
 | A1 | How do we get Muse Spark access? | We get a key at the Meta booth. Until then, use any OpenAI-compatible model by changing the `AI_*` variables. | Assumed | `.env`, `lib/ai.ts` |
 | A2 | Responses API or Chat Completions? | Chat Completions (`ai.chat.completions.create`), because most OpenAI-compatible fallbacks support it. Switch if Meta's quickstart says otherwise. | Assumed | `scripts/smoke.ts`, agents |
 | A3 | Does Muse Spark support tools, JSON output and photo input? | Yes, all three. | Assumed | `lib/agents/*` |
-| A4 | Is Muse Image in the API? | Unknown, so `IMAGE_PROVIDER` can be `muse` or `gemini`. | Assumed | `.env`, `lib/agents/recap.ts` |
+| A4 | Is Muse Image in the API? | Yes. Model `muse-image-1.0` on `POST /v1/images/generations`, returns `b64_json`. `IMAGE_PROVIDER=muse` uses `AI_API_KEY`. Gemini stays as a fallback. | Decided | `.env`, `lib/recap/images.ts` |
 | A5 | Muse connector format and access | Unknown. The route is a stub, and the work is held until after hour 16. | Assumed | `app/api/connector/[action]` |
 | A6 | SerpApi credits | Limited. Every response is cached in `serp_cache`, and each quest run is capped at 3 searches. | Assumed | `lib/serp.ts`, `lib/agents/questAgent.ts` |
 | A7 | SerpApi response field names | `local_results` for maps and `events_results` for events. Check these against a real response. | Assumed | `lib/serp.ts` |

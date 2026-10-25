@@ -45,8 +45,8 @@ export class GeminiImageProvider implements ImageProvider {
 }
 
 /**
- * UNVERIFIED: assumes Meta exposes an OpenAI-style images endpoint. Check Meta's docs
- * for Muse Image (endpoint, model name, response format) before relying on this.
+ * Meta's OpenAI-style images endpoint (POST /v1/images/generations).
+ * Verified 2026-10-24: model "muse-image-1.0" returns b64_json. Uses AI_API_KEY, not IMAGE_API_KEY.
  */
 export class MuseImageProvider implements ImageProvider {
   readonly name = "muse";
@@ -80,7 +80,7 @@ export async function createImageProvider(env: NodeJS.ProcessEnv = process.env):
     case "muse": {
       // Lazy import: lib/ai throws at import time if AI_API_KEY is missing.
       const { ai } = await import("@/lib/ai");
-      return new MuseImageProvider(ai, env.IMAGE_MODEL ?? "muse-image");
+      return new MuseImageProvider(ai, env.IMAGE_MODEL ?? "muse-image-1.0");
     }
     default:
       throw new Error(`Unknown IMAGE_PROVIDER "${kind}"`);
