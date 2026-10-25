@@ -6,15 +6,8 @@ import { z } from "zod";
 import OpenAI from "openai";
 import { ai, MODEL } from "@/lib/ai";
 import { searchPlaces, searchEvents } from "@/lib/serp";
-//import { getPastQuests } from "@/lib/db/queries"; // you or Data writes this: last 8 quests for crew
+import { getPastQuests } from "@/lib/db/queries";
 import { QUEST_SYSTEM_PROMPT, questUserPrompt } from "@/lib/prompts/quest";
-
-// TEMPORARY: replace with the real import from "@/lib/db/queries" once Data finishes it
-// aka uncheck the line above and delete this function. It should return the last 8 quests for this crew.
-async function getPastQuests(crewId: string): Promise<unknown[]> {
-  void crewId;
-  return [];
-}
 
 export const QuestSchema = z.object({
   title: z.string(),
@@ -102,7 +95,7 @@ export async function runQuestAgent(profile: CrewProfile): Promise<ProposedQuest
   const known = new Map<string, KnownPlace>();
   let searches = 0;
 
-  async function runTool(name: string, args: any): Promise<unknown> {
+  async function runTool(name: string, args: { query: string }): Promise<unknown> {
     if (name === "get_past_quests") return getPastQuests(profile.crewId);
 
     if (searches >= MAX_SEARCHES) {

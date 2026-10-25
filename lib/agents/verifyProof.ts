@@ -2,8 +2,8 @@
 // Owner: AI. See "AI layer > Photo checker" in the architecture doc.
 import { z } from "zod";
 import sharp from "sharp";
-import { ai, MODEL } from "@/lib/ai";
-import { VERIFY_SYSTEM_PROMPT, verifyProofUserPrompt } from "@/lib/prompts/verify";
+import { ai, MODEL, proofCheckMode } from "@/lib/ai";
+import { VERIFY_LENIENT_SYSTEM_PROMPT, VERIFY_SYSTEM_PROMPT, verifyProofUserPrompt } from "@/lib/prompts/verify";
 
 export const ProofVerdictSchema = z.object({
   verdict: z.enum(["pass", "unsure", "fail"]),
@@ -30,6 +30,16 @@ const FALLBACK: ProofVerdict = {
 };
 
 export async function verifyProof(input: VerifyProofInput): Promise<ProofVerdict> {
+  const mode = proofCheckMode();
+  const verdict = await checkPhoto(input, mode === "strict" ? VERIFY_SYSTEM_PROMPT : VERIFY_LENIENT_SYSTEM_PROMPT);
+  if (mode === "strict") return verdict;
+  // Checking is off: keep the model's caption (or the fallback's), always pass.
+  if (mode === "off") return { ...verdict, verdict: "pass", confidence: 1, reason: "Photo check is off (PROOF_CHECK=off)." };
+  // Lenient never fails a photo, even if the model ignores the prompt; a crewmate can still approve.
+  return verdict.verdict === "fail" ? { ...verdict, verdict: "unsure" } : verdict;
+}
+
+async function checkPhoto(input: VerifyProofInput, systemPrompt: string): Promise<ProofVerdict> {
   try {
     // 1. Shrink the photo (rotate() fixes sideways phone photos)
     const resized = await sharp(input.photo)
@@ -43,7 +53,7 @@ export async function verifyProof(input: VerifyProofInput): Promise<ProofVerdict
     const res = await ai.chat.completions.create({
       model: MODEL,
       messages: [
-        { role: "system", content: VERIFY_SYSTEM_PROMPT },
+        { role: "system", content: systemPrompt },
         {
           role: "user",
           content: [

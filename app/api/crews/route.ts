@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { createCrew, joinCrew, inviteLink } from "@/lib/services/crews";
 import { setSession } from "@/lib/session";
+import { VIBES, MIN_VIBES, MAX_VIBES } from "@/lib/vibes";
 
 const Body = z.object({
   crewName: z.string().trim().min(1).max(60),
@@ -12,7 +13,7 @@ const Body = z.object({
   homeLat: z.number(),
   homeLng: z.number(),
   yourName: z.string().trim().min(1).max(40),
-  interests: z.array(z.string()).max(5),
+  interests: z.array(z.enum(VIBES)).min(MIN_VIBES).max(MAX_VIBES),
 });
 
 export async function POST(req: Request) {

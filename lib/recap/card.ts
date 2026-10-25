@@ -37,7 +37,7 @@ function sanitize(text: string): string {
       // Emoji and other astral characters: server fonts often lack them and draw boxes.
       .replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, "")
       .replace(/[\u2600-\u27BF]/g, "")
-      // eslint-disable-next-line no-control-regex -- these are invalid in XML
+       
       .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
       .replace(/\s+/g, " ")
       .trim()
@@ -183,7 +183,7 @@ function buildOverlay(content: CardContent): string {
     out.push(text(cx, FOOTER_Y + 105, 96, ACCENT, value));
     out.push(text(cx, FOOTER_Y + 150, 28, "#fff", label, 'fill-opacity="0.7" letter-spacing="3"'));
   }
-  out.push(text(centerX, FOOTER_Y + 218, 30, "#fff", `${sanitize(content.periodLabel)}  ·  pullup.tech`, 'fill-opacity="0.8"'));
+  out.push(text(centerX, FOOTER_Y + 218, 30, "#fff", `${sanitize(content.periodLabel)}  ·  pull-up.tech`, 'fill-opacity="0.8"'));
 
   return `<svg width="${CARD_WIDTH}" height="${CARD_HEIGHT}" xmlns="http://www.w3.org/2000/svg">${out.join("")}</svg>`;
 }
