@@ -1,124 +1,132 @@
-// Recap writer: month of quests -> 4-panel comic script -> panel images -> 1080x1920 card.
-// Owner: AI (script + images), Frontend helps with the card layout.
-import sharp from "sharp";
+// Recap writer: a crew's unused photos -> title + captions from Muse Spark -> collage card.
+// Owner: AI (script), Frontend helps with the card layout.
 import { z } from "zod";
-import { CARD_HEIGHT, CARD_WIDTH, renderRecapCard } from "@/lib/recap/card";
-import type { ImageProvider } from "@/lib/recap/images";
-import { RECAP_SCRIPT_PROMPT, panelImagePrompt, recapScriptUserPrompt } from "@/lib/prompts/recap";
-
+import { CARD_HEIGHT, CARD_WIDTH, MAX_TILES, renderRecapCard } from "@/lib/recap/card";
+import { RECAP_SCRIPT_PROMPT, recapScriptUserPrompt } from "@/lib/prompts/recap";
 
 export { CARD_HEIGHT, CARD_WIDTH };
 
-export const ComicScript = z.object({
-  title: z.string().trim().min(1).max(60),
-  panels: z
-    .array(
-      z.object({
-        scene: z.string().trim().min(1).max(400),
-        dialogue: z.string().trim().min(1).max(140),
-      }),
-    )
-    .length(4),
-});
-export type ComicScript = z.infer<typeof ComicScript>;
-
-/** What the database layer must provide (implemented in lib/recap/loadInput.ts as getRecapInput). */
-export type RecapQuest = {
-  title: string;
+/** One accepted, not-yet-used proof photo. Implemented in lib/recap/loadInput.ts as getRecapInput. */
+export type RecapPhoto = {
+  proofId: string; // proofs.id, claimed when the recap is saved
+  questId: string;
+  photoKey: string; // proofs.photo_key (the original upload in object storage)
+  questTitle: string;
   placeName: string;
-  caption: string | null;
-  completedAt: string; // ISO timestamp
+  caption: string | null; // the caption verifyProof wrote
+  takenAt: string; // ISO timestamp (proofs.created_at)
+  confidence: number; // proofs.confidence, used to pick one photo per quest
 };
 export type RecapStats = { questsDone: number; photos: number; votes: number };
 export type RecapInput = {
   crewName: string;
-  quests: RecapQuest[]; // completed quests in the period
-  stats: RecapStats; // from crew_weekly, summed over the period
+  photos: RecapPhoto[]; // every unused accepted proof for the crew
+  stats: RecapStats; // for the same stretch of time as the photos
 };
 
-export type RecapBeat =
-  | { kind: "quest"; title: string; place: string; caption: string | null }
-  | { kind: "hangout" };
-
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const scriptSchema = (photoCount: number) =>
+  z.object({
+    title: z.string().trim().min(1).max(60),
+    captions: z.array(z.string().trim().min(1).max(100)).length(photoCount),
+  });
+export type RecapScript = { title: string; captions: string[] };
 
 /** Everything needed to redraw the card without any AI call. Stored as manifest.json. */
-const RecapManifest = z.object({
-  version: z.literal(1),
-  crewName: z.string(),
-  periodStart: z.string().regex(ISO_DATE),
-  periodEnd: z.string().regex(ISO_DATE),
-  script: ComicScript,
-  stats: z.object({ questsDone: z.number(), photos: z.number(), votes: z.number() }),
-  panelKeys: z.array(z.string().nullable()).length(4), // null = the image failed, use a placeholder
-});
+const RecapManifest = z
+  .object({
+    version: z.literal(3),
+    recapId: z.string(),
+    crewName: z.string(),
+    periodStart: z.string(), // ISO timestamp of the earliest photo
+    periodEnd: z.string(), // ISO timestamp of the latest photo
+    script: z.object({ title: z.string(), captions: z.array(z.string()) }),
+    stats: z.object({ questsDone: z.number(), photos: z.number(), votes: z.number() }),
+    photoKeys: z.array(z.string()).min(1).max(MAX_TILES),
+  })
+  .refine((m) => m.script.captions.length === m.photoKeys.length, {
+    message: "captions and photoKeys differ in length",
+  });
 export type RecapManifest = z.infer<typeof RecapManifest>;
 
 export type RecapResult = {
+  recapId: string;
   imageKey: string;
   manifestKey: string;
-  panelKeys: (string | null)[];
-  script: ComicScript;
+  photoKeys: string[]; // the photos shown on the card
+  script: RecapScript;
+  periodStart: string; // store in recaps.period_start
+  periodEnd: string; // store in recaps.period_end
+  proofIds: string[]; // EVERY photo that went into this recap's period: mark all of them as used
 };
+export type RerenderResult = Omit<RecapResult, "proofIds">;
+
+/** Thrown when the crew has no unused accepted photos (the route should answer 409, not 500). */
+export class NoPhotosError extends Error {
+  constructor(crewId: string) {
+    super(`No new photos for crew ${crewId} since the last recap`);
+    this.name = "NoPhotosError";
+  }
+}
 
 /** Object-storage keys for one recap. Deterministic, so nothing needs to be saved in the database. */
-export function recapKeys(crewId: string, periodStart: string) {
-  const prefix = `recaps/${crewId}/${periodStart}`;
-  return {
-    card: `${prefix}/card.jpg`,
-    manifest: `${prefix}/manifest.json`,
-    panel: (index: number) => `${prefix}/panel-${index + 1}.jpg`,
-  };
+export function recapKeys(crewId: string, recapId: string) {
+  const prefix = `recaps/${crewId}/${recapId}`;
+  return { card: `${prefix}/card.jpg`, manifest: `${prefix}/manifest.json` };
 }
 
 /** Everything with side effects, injectable so tests need no network, DB, or keys. */
 export type RecapDeps = {
-  loadInput(crewId: string, periodStart: string, periodEnd: string): Promise<RecapInput>;
+  loadInput(crewId: string): Promise<RecapInput>;
   completeJson(system: string, user: string): Promise<string>;
-  image: ImageProvider | null; // null => placeholder panels
   putObject(key: string, body: Buffer, contentType: string): Promise<void>;
   getObject(key: string): Promise<Buffer>;
 };
 
-const PANEL_COUNT = 4;
 const SCRIPT_ATTEMPTS = 2;
-const PANEL_ATTEMPTS = 2;
 const SCRIPT_TIMEOUT_MS = 60_000;
-const PANEL_TIMEOUT_MS = 60_000;
 
-function assertCrewId(crewId: string): void {
-  if (!/^[\w-]+$/.test(crewId)) throw new Error("Invalid crewId");
+function assertSafeId(name: string, value: string): void {
+  if (!/^[\w-]+$/.test(value)) throw new Error(`Invalid ${name}`);
 }
 
-function assertDate(value: string, name: string): void {
-  if (!ISO_DATE.test(value) || Number.isNaN(Date.parse(value))) {
-    throw new Error(`${name} must be a YYYY-MM-DD date`);
+function timeOf(iso: string): number {
+  const time = Date.parse(iso);
+  if (Number.isNaN(time)) throw new Error(`Invalid timestamp: ${iso}`);
+  return time;
+}
+
+/** "October 2026", "Oct 3 – Nov 12, 2026", or "Dec 20, 2026 – Jan 5, 2027". Dates are in UTC. */
+export function formatPeriodLabel(startIso: string, endIso: string): string {
+  const start = new Date(timeOf(startIso));
+  const end = new Date(timeOf(endIso));
+  const fmt = (date: Date, options: Intl.DateTimeFormatOptions) =>
+    date.toLocaleDateString("en-US", { ...options, timeZone: "UTC" });
+
+  const sameYear = start.getUTCFullYear() === end.getUTCFullYear();
+  if (sameYear && start.getUTCMonth() === end.getUTCMonth()) return fmt(end, { month: "long", year: "numeric" });
+  if (sameYear) {
+    return `${fmt(start, { month: "short", day: "numeric" })} – ${fmt(end, { month: "short", day: "numeric", year: "numeric" })}`;
   }
+  const full: Intl.DateTimeFormatOptions = { month: "short", day: "numeric", year: "numeric" };
+  return `${fmt(start, full)} – ${fmt(end, full)}`;
 }
 
-function formatPeriod(periodStart: string): string {
-  return new Date(`${periodStart}T00:00:00Z`).toLocaleDateString("en-US", {
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  });
-}
-
-/** Up to 4 highlights spread evenly across the month; padded with "hangout" beats if fewer. */
-export function pickBeats(quests: RecapQuest[]): RecapBeat[] {
-  const sorted = [...quests].sort((a, b) => a.completedAt.localeCompare(b.completedAt));
-  const chosen =
-    sorted.length <= PANEL_COUNT
-      ? sorted
-      : Array.from({ length: PANEL_COUNT }, (_, i) => sorted[Math.round((i * (sorted.length - 1)) / (PANEL_COUNT - 1))]);
-  const beats: RecapBeat[] = chosen.map((q) => ({
-    kind: "quest",
-    title: q.title,
-    place: q.placeName,
-    caption: q.caption,
-  }));
-  while (beats.length < PANEL_COUNT) beats.push({ kind: "hangout" });
-  return beats;
+/** One photo per quest (most confident, earliest on ties), in date order, evenly sampled down to MAX_TILES. */
+export function pickPhotos(photos: RecapPhoto[]): RecapPhoto[] {
+  const best = new Map<string, RecapPhoto>();
+  for (const photo of photos) {
+    const current = best.get(photo.questId);
+    if (
+      !current ||
+      photo.confidence > current.confidence ||
+      (photo.confidence === current.confidence && timeOf(photo.takenAt) < timeOf(current.takenAt))
+    ) {
+      best.set(photo.questId, photo);
+    }
+  }
+  const sorted = [...best.values()].sort((a, b) => timeOf(a.takenAt) - timeOf(b.takenAt));
+  if (sorted.length <= MAX_TILES) return sorted;
+  return Array.from({ length: MAX_TILES }, (_, i) => sorted[Math.round((i * (sorted.length - 1)) / (MAX_TILES - 1))]);
 }
 
 function extractJson(raw: string): unknown {
@@ -128,85 +136,63 @@ function extractJson(raw: string): unknown {
   return JSON.parse(raw.slice(start, end + 1));
 }
 
-/** Deterministic script used when the model fails, so a recap is always produced. */
-function fallbackScript(crewName: string, beats: RecapBeat[]): ComicScript {
-  const lines = ["Okay, who's got the plan?", "I thought you had the plan!", "Best. Day. Ever.", "Same time next week?"];
-  return ComicScript.parse({
-    title: `${crewName}'s Month`.slice(0, 60),
-    panels: beats.map((beat, i) => ({
-      scene: (
-        beat.kind === "quest"
-          ? `A group of cartoon friends at ${beat.place}, having fun with: ${beat.title}`
-          : "A group of cartoon friends relaxing together on a sofa, laughing"
-      ).slice(0, 400),
-      dialogue: lines[i % lines.length],
-    })),
-  });
+/** Used when the model fails: the captions verifyProof already wrote. Never throws. */
+function fallbackScript(photos: RecapPhoto[]): RecapScript {
+  return {
+    title: "Our Side Quest Recap",
+    captions: photos.map((p) => (p.caption?.trim() || p.questTitle.trim() || "Pulled up!").slice(0, 100)),
+  };
 }
 
-async function writeScript(deps: RecapDeps, crewName: string, beats: RecapBeat[]): Promise<ComicScript> {
-  const prompt = recapScriptUserPrompt(crewName, beats);
+async function writeScript(deps: RecapDeps, crewName: string, photos: RecapPhoto[]): Promise<RecapScript> {
+  const schema = scriptSchema(photos.length);
+  const prompt = recapScriptUserPrompt(crewName, photos);
   let feedback = "";
   for (let attempt = 1; attempt <= SCRIPT_ATTEMPTS; attempt++) {
     try {
       const raw = await deps.completeJson(RECAP_SCRIPT_PROMPT, prompt + feedback);
-      return ComicScript.parse(extractJson(raw));
+      return schema.parse(extractJson(raw));
     } catch (error) {
-      const reason = (error instanceof Error ? error.message : String(error)).slice(0, 300);
-      console.warn(`[recap] script attempt ${attempt}/${SCRIPT_ATTEMPTS} failed: ${reason}`);
-      feedback = `\n\nYour previous reply was rejected (${reason}). Reply with ONLY the JSON object, with exactly 4 panels.`;
+      const reason = (
+        error instanceof z.ZodError
+          ? error.issues.map((issue) => `${issue.path.join(".") || "reply"}: ${issue.message}`).join("; ")
+          : error instanceof Error
+            ? error.message
+            : String(error)
+      ).slice(0, 300);      feedback = `\n\nYour previous reply was rejected (${reason}). Reply with ONLY the JSON object, with exactly ${photos.length} captions.`;
     }
   }
-  try {
-    return fallbackScript(crewName, beats);
-  } catch {
-    // A pathological crew name could break the title limit; use a safe title.
-    return fallbackScript("Our", beats);
-  }
+  return fallbackScript(photos);
 }
 
-/** One panel: generate, then normalize to JPEG. Normalizing also proves the bytes are a decodable image. */
-async function drawPanel(provider: ImageProvider, prompt: string): Promise<Buffer> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= PANEL_ATTEMPTS; attempt++) {
-    try {
-      const raw = await provider.generate(prompt, AbortSignal.timeout(PANEL_TIMEOUT_MS));
-      return await sharp(raw).jpeg({ quality: 92 }).toBuffer();
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw lastError;
-}
-
-/** Draws all panels in parallel. A failed panel becomes null (the card renders a placeholder). */
-async function drawPanels(provider: ImageProvider | null, script: ComicScript): Promise<(Buffer | null)[]> {
-  if (!provider) return script.panels.map(() => null);
-  const results = await Promise.allSettled(script.panels.map((p) => drawPanel(provider, panelImagePrompt(p.scene))));
-  return results.map((result, i) => {
+/** Downloads the photos. An unreadable one becomes null (placeholder tile); none readable at all is an error. */
+async function loadPhotos(deps: RecapDeps, keys: string[]): Promise<(Buffer | null)[]> {
+  const results = await Promise.allSettled(keys.map((key) => deps.getObject(key)));
+  const images = results.map((result, i) => {
     if (result.status === "fulfilled") return result.value;
-    console.warn(`[recap] panel ${i + 1} failed, using placeholder:`, result.reason);
+    console.warn(`[recap] photo ${i + 1} (${keys[i]}) unreadable, using placeholder:`, result.reason);
     return null;
   });
+  if (images.every((image) => image === null)) throw new Error("Could not read any recap photos from storage");
+  return images;
 }
 
-function renderCard(manifest: RecapManifest, panels: (Buffer | null)[]): Promise<Buffer> {
+function renderCard(manifest: RecapManifest, images: (Buffer | null)[]): Promise<Buffer> {
   return renderRecapCard({
     title: manifest.script.title,
     crewName: manifest.crewName,
-    periodLabel: formatPeriod(manifest.periodStart),
+    periodLabel: formatPeriodLabel(manifest.periodStart, manifest.periodEnd),
     stats: manifest.stats,
-    panels: manifest.script.panels.map((panel, i) => ({ image: panels[i], dialogue: panel.dialogue })),
+    tiles: manifest.script.captions.map((caption, i) => ({ image: images[i], caption })),
   });
 }
 
 async function defaultDeps(): Promise<RecapDeps> {
-  // Lazy imports: lib/ai throws at import time when AI_API_KEY is unset, and the DB code is heavy.
-  const [{ ai, MODEL }, storage, recapInput, images] = await Promise.all([
+  // Lazy imports: lib/ai throws at import time when AI_API_KEY is unset.
+  const [{ ai, MODEL }, storage, recapInput] = await Promise.all([
     import("@/lib/ai"),
     import("@/lib/storage"),
     import("@/lib/recap/loadInput"),
-    import("@/lib/recap/images"),
   ]);
   return {
     loadInput: recapInput.getRecapInput,
@@ -223,7 +209,6 @@ async function defaultDeps(): Promise<RecapDeps> {
       );
       return res.choices[0]?.message?.content ?? "";
     },
-    image: await images.createImageProvider(),
     putObject: async (key, body, contentType) => {
       // storage.putObject returns a string we don't need: our keys are deterministic (see recapKeys).
       await storage.putObject(key, body, contentType);
@@ -232,74 +217,90 @@ async function defaultDeps(): Promise<RecapDeps> {
   };
 }
 
-/** Full pipeline: script -> panels -> card, and stores panels + manifest so the card can be redrawn later. */
-export async function buildRecap(
-  crewId: string,
-  periodStart: string,
-  periodEnd: string,
-  deps?: RecapDeps,
-): Promise<RecapResult> {
-  assertCrewId(crewId);
-  assertDate(periodStart, "periodStart");
-  assertDate(periodEnd, "periodEnd");
-  if (periodStart > periodEnd) throw new Error("periodStart must not be after periodEnd");
+/**
+ * Builds a recap from the crew's unused photos and stores the card + manifest.
+ * It does NOT touch the database. The caller must then call saveRecap() (lib/recap/saveRecap.ts) with the
+ * result, which records the recap and marks the photos as used in one transaction.
+ */
+export async function buildRecap(crewId: string, recapId: string, deps?: RecapDeps): Promise<RecapResult> {
+  assertSafeId("crewId", crewId);
+  assertSafeId("recapId", recapId);
   const d = deps ?? (await defaultDeps());
 
-  const input = await d.loadInput(crewId, periodStart, periodEnd);
-  const script = await writeScript(d, input.crewName, pickBeats(input.quests));
-  const panels = await drawPanels(d.image, script);
+  const input = await d.loadInput(crewId);
+  if (input.photos.length === 0) throw new NoPhotosError(crewId);
 
-  const keys = recapKeys(crewId, periodStart);
+  const photos = pickPhotos(input.photos);
+  const times = input.photos.map((p) => timeOf(p.takenAt));
+  const periodStart = new Date(Math.min(...times)).toISOString();
+  const periodEnd = new Date(Math.max(...times)).toISOString();
+
+  // The script never throws (it falls back), so the two jobs can run side by side.
+  const [script, images] = await Promise.all([
+    writeScript(d, input.crewName, photos),
+    loadPhotos(
+      d,
+      photos.map((p) => p.photoKey),
+    ),
+  ]);
+
   const manifest: RecapManifest = {
-    version: 1,
+    version: 3,
+    recapId,
     crewName: input.crewName,
     periodStart,
     periodEnd,
     script,
     stats: input.stats,
-    panelKeys: panels.map((panel, i) => (panel ? keys.panel(i) : null)),
+    photoKeys: photos.map((p) => p.photoKey),
   };
 
-  const card = await renderCard(manifest, panels);
+  const keys = recapKeys(crewId, recapId);
+  const card = await renderCard(manifest, images);
   await Promise.all([
     d.putObject(keys.card, card, "image/jpeg"),
     d.putObject(keys.manifest, Buffer.from(JSON.stringify(manifest)), "application/json"),
-    ...panels.flatMap((panel, i) => (panel ? [d.putObject(keys.panel(i), panel, "image/jpeg")] : [])),
   ]);
 
-  return { imageKey: keys.card, manifestKey: keys.manifest, panelKeys: manifest.panelKeys, script };
+  return {
+    recapId,
+    imageKey: keys.card,
+    manifestKey: keys.manifest,
+    photoKeys: manifest.photoKeys,
+    script,
+    periodStart,
+    periodEnd,
+    proofIds: input.photos.map((p) => p.proofId),
+  };
 }
 
 /**
- * Redraws the card from stored panels + manifest. No AI calls, no database: free and fast.
- * Use after changing the layout in lib/recap/card.ts.
+ * Redraws an existing recap's card from its manifest and the original photos. No AI calls, no database:
+ * free and fast. Use after changing the layout in lib/recap/card.ts.
  */
-export async function rerenderRecap(crewId: string, periodStart: string, deps?: RecapDeps): Promise<RecapResult> {
-  assertCrewId(crewId);
-  assertDate(periodStart, "periodStart");
+export async function rerenderRecap(crewId: string, recapId: string, deps?: RecapDeps): Promise<RerenderResult> {
+  assertSafeId("crewId", crewId);
+  assertSafeId("recapId", recapId);
   const d = deps ?? (await defaultDeps());
-  const keys = recapKeys(crewId, periodStart);
+  const keys = recapKeys(crewId, recapId);
 
   let manifest: RecapManifest;
   try {
     manifest = RecapManifest.parse(JSON.parse((await d.getObject(keys.manifest)).toString("utf8")));
   } catch (error) {
-    throw new Error(`No usable stored recap for ${crewId} / ${periodStart}; run buildRecap first.`, { cause: error });
+    throw new Error(`No usable stored recap ${recapId} for crew ${crewId}; run buildRecap first.`, { cause: error });
   }
 
-  const panels = await Promise.all(
-    manifest.panelKeys.map(async (key, i) => {
-      if (!key) return null;
-      try {
-        return await d.getObject(key);
-      } catch (error) {
-        console.warn(`[recap] stored panel ${i + 1} unreadable, using placeholder:`, error);
-        return null;
-      }
-    }),
-  );
-
-  const card = await renderCard(manifest, panels);
+  const images = await loadPhotos(d, manifest.photoKeys);
+  const card = await renderCard(manifest, images);
   await d.putObject(keys.card, card, "image/jpeg");
-  return { imageKey: keys.card, manifestKey: keys.manifest, panelKeys: manifest.panelKeys, script: manifest.script };
+  return {
+    recapId,
+    imageKey: keys.card,
+    manifestKey: keys.manifest,
+    photoKeys: manifest.photoKeys,
+    script: manifest.script,
+    periodStart: manifest.periodStart,
+    periodEnd: manifest.periodEnd,
+  };
 }
