@@ -63,6 +63,17 @@ export async function getLatestRecap(crewId: string): Promise<Recap | null> {
   return row ?? null;
 }
 
+/** The secret roles from the quests in this recap: the recap is where they're revealed. */
+export async function getRecapRoles(recapId: string) {
+  const quests = await db
+    .selectDistinct({ questId: schema.proofs.questId })
+    .from(schema.proofs)
+    .where(eq(schema.proofs.recapId, recapId));
+  if (!quests.length) return [];
+  const { getRolesFor } = await import("@/lib/recap/loadInput");
+  return getRolesFor(quests.map((q) => q.questId));
+}
+
 /** Same-origin link to the card, so the Share button can fetch it without bucket CORS. */
 export function recapImageUrl(recap: Recap) {
   return `/api/crews/${recap.crewId}/recap/image?v=${recap.id}`;

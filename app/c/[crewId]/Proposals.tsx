@@ -4,6 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { post } from "@/app/lib/post";
 import type { ProposalView } from "@/lib/services/crews";
+import TripTimes from "./TripTimes";
+import { TIMEZONE } from "@/lib/time";
 
 const COLORS = ["bg-sun", "bg-sky", "bg-white"];
 const TILTS = ["-1.5deg", "1deg", "-0.5deg"];
@@ -26,7 +28,7 @@ export default function Proposals({
   const [error, setError] = useState("");
   const needed = Math.floor(memberCount / 2) + 1;
   const closes = votingClosesAt
-    ? new Date(votingClosesAt).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit" })
+    ? new Date(votingClosesAt).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: TIMEZONE })
     : null;
 
   async function vote(questId: string) {
@@ -71,6 +73,7 @@ export default function Proposals({
               {q.timeNeededMin && <>⏱️ {Math.round(q.timeNeededMin / 6) / 10} h · </>}
               {q.whyThisCrew}
             </p>
+            <TripTimes travel={q.travel} />
             {myVote ? (
               mine && <p className="mt-4 font-bold">✓ Your vote</p>
             ) : (

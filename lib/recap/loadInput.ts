@@ -8,14 +8,15 @@
 //   stats:    questsDone = distinct quests among the photos, photos = number of photos,
 //             votes = 'voted' activity rows from the start of the earliest photo's quest week
 //             up to the latest photo, so the votes that picked those quests count.
-import { and, asc, count, eq, gte, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, count, eq, gte, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { TIMEZONE } from "@/lib/time";
+import { featuresOf } from "@/lib/features";
 import type { RecapInput, RecapPhoto } from "@/lib/agents/recap";
 
 export async function getRecapInput(crewId: string): Promise<RecapInput> {
   const [crew] = await db
-    .select({ name: schema.crews.name })
+    .select({ name: schema.crews.name, features: schema.crews.features })
     .from(schema.crews)
     .where(eq(schema.crews.id, crewId))
     .limit(1);
@@ -72,9 +73,30 @@ export async function getRecapInput(crewId: string): Promise<RecapInput> {
     votes = row.votes;
   }
 
+  const questIds = [...new Set(rows.map((r) => r.questId))];
+  const roles = questIds.length && featuresOf(crew.features).secretRoles ? await getRolesFor(questIds) : [];
+
   return {
     crewName: crew.name,
     photos,
-    stats: { questsDone: new Set(rows.map((r) => r.questId)).size, photos: rows.length, votes },
+    stats: { questsDone: questIds.length, photos: rows.length, votes },
+    roles,
   };
+}
+
+/** Secret roles for these quests, with who had them. They're revealed in the recap. */
+export async function getRolesFor(questIds: string[]) {
+  return db
+    .select({
+      quest: schema.quests.title,
+      name: schema.users.name,
+      role: schema.questRoles.role,
+      emoji: schema.questRoles.emoji,
+      mission: schema.questRoles.mission,
+    })
+    .from(schema.questRoles)
+    .innerJoin(schema.quests, eq(schema.quests.id, schema.questRoles.questId))
+    .innerJoin(schema.users, eq(schema.users.id, schema.questRoles.userId))
+    .where(inArray(schema.questRoles.questId, questIds))
+    .orderBy(asc(schema.quests.createdAt), asc(schema.users.name));
 }

@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { DEMO_MODE } from "@/lib/ai";
 
-type Engine = "google_maps" | "google_events";
+type Engine = "google_maps" | "google_events" | "google_maps_directions";
 
 export type Place = {
   name: string;
@@ -17,6 +17,8 @@ export type Place = {
   lat?: number;
   lng?: number;
   placeId: string;
+  price?: string; // "$", "$10–20"
+  operatingHours?: Record<string, string>; // { saturday: "11 AM–10 PM", ... }, see lib/hours.ts
 };
 
 export type Event = {
@@ -54,16 +56,8 @@ async function cachedSearch(engine: Engine, params: Record<string, string>) {
   return response as Record<string, unknown>;
 }
 
-/** Top 8 places for `query` near a lat/lng. */
-export async function searchPlaces(query: string, lat: number, lng: number): Promise<Place[]> {
-  const res = await cachedSearch("google_maps", {
-    q: query,
-    ll: `@${lat},${lng},14z`,
-    type: "search",
-  });
-  // TODO(Data): confirm field names against a real response.
-  const results = (res.local_results as Record<string, any>[] | undefined) ?? [];
-  return results.slice(0, 8).map((r) => ({
+function toPlace(r: Record<string, any>): Place {
+  return {
     name: r.title,
     address: r.address,
     type: r.type,
@@ -72,7 +66,63 @@ export async function searchPlaces(query: string, lat: number, lng: number): Pro
     lat: r.gps_coordinates?.latitude,
     lng: r.gps_coordinates?.longitude,
     placeId: r.place_id,
-  }));
+    price: r.price,
+    operatingHours: r.operating_hours,
+  };
+}
+
+/** Top 8 places for `query` near a lat/lng. */
+export async function searchPlaces(query: string, lat: number, lng: number): Promise<Place[]> {
+  const res = await cachedSearch("google_maps", {
+    q: query,
+    ll: `@${lat},${lng},14z`,
+    type: "search",
+  });
+  // Field names checked against a real response on 2026-10-24 (A7).
+  const results = (res.local_results as Record<string, any>[] | undefined) ?? [];
+  return results.slice(0, 8).map(toPlace);
+}
+
+/** Nearby places at street level (zoom 16), for "within walking distance" searches. */
+export async function searchPlacesNearby(query: string, lat: number, lng: number): Promise<Place[]> {
+  const res = await cachedSearch("google_maps", { q: query, ll: `@${lat},${lng},16z`, type: "search" });
+  const results = (res.local_results as Record<string, any>[] | undefined) ?? [];
+  return results.slice(0, 20).map(toPlace);
+}
+
+export type Trip = { minutes: number; mode: string };
+
+/**
+ * Fastest car-free trip (walking or transit) between two points, from Google Maps Directions.
+ * One call returns every mode's time in `durations`. Null if there's no route.
+ */
+export async function travelTime(from: { lat: number; lng: number }, to: { lat: number; lng: number }): Promise<Trip | null> {
+  // Rounded so nearby starts share a cache entry (~100 m).
+  const fmt = (p: { lat: number; lng: number }) => `${p.lat.toFixed(3)},${p.lng.toFixed(3)}`;
+  const res = await cachedSearch("google_maps_directions", { start_coords: fmt(from), end_coords: fmt(to) });
+  const durations = (res.durations as { travel_mode: string; duration: number }[] | undefined) ?? [];
+  const carFree = durations.filter((d) => d.travel_mode === "Walking" || d.travel_mode === "Transit");
+  if (!carFree.length) return null;
+  const best = carFree.reduce((a, b) => (b.duration < a.duration ? b : a));
+  return { minutes: Math.round(best.duration / 60), mode: best.travel_mode.toLowerCase() };
+}
+
+/** What Google Lens finds for a public image URL: titles of matching pages. Not cached (signed URLs are unique). */
+export async function lensMatches(imageUrl: string): Promise<{ title: string; source?: string }[]> {
+  if (DEMO_MODE) return [];
+  const url = new URL("https://serpapi.com/search.json");
+  url.search = new URLSearchParams({
+    engine: "google_lens",
+    type: "visual_matches", // the default type only returns a deferred AI overview token
+    url: imageUrl,
+    api_key: process.env.SERPAPI_KEY ?? "",
+  }).toString();
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`SerpApi google_lens failed: ${res.status}`);
+  const json = await res.json();
+  return ((json.visual_matches as Record<string, any>[] | undefined) ?? [])
+    .slice(0, 8)
+    .map((m) => ({ title: String(m.title ?? ""), source: m.source }));
 }
 
 /** Top 8 events for `query` near a place name, e.g. "Austin, TX". */

@@ -58,6 +58,11 @@ The whole demo story, end to end:
 - Landing page creates a crew, with the creator's vibe chips (`POST /api/crews`)
 - `/j/CODE` join page with vibe chips (`POST /api/crews/[id]/join`)
 - Crew home `/c/[id]`: Share invite, streak and totals, **Pull up** (quest agent, `POST /api/crews/[id]/generate`), voting (`POST /api/quests/[id]/vote`), active quest card with a Google Maps link, **We pulled up** photo upload + AI check (`POST /api/quests/[id]/proof`), photo feed with **Approve** for unsure photos (`POST /api/proofs/[id]/approve`)
+- Crew screens use a bottom tab bar: Quest, Now, Feed, Recap, Crew. The four extras below are optional: the creator picks them under "✨ Extras" when making the crew and can change them in the Crew tab (`POST /api/crews/[id]/features`)
+- **⚡ Pull Up Now**: "2 hours, $20, near campus" → 3 places open right now within a 20-min walk; one tap starts it (`POST /api/crews/[id]/now`, `/api/quests/[id]/start`, `/api/quests/[id]/drop`)
+- **🧭 Fair meetup**: each member sets a starting area (`POST /api/crews/[id]/start-area`); weekly proposals show everyone's trip time (SerpApi Directions) and flag 40+ min trips
+- **🤫 Secret roles** dealt when a quest starts, each member sees only theirs; revealed on the recap page
+- **🎯 Photo bingo**: 5 prompts per quest, checked off live by the photo checker; Google Lens fun facts on photos
 - Recap `/c/[id]/recap`: **Make recap** (`POST /api/crews/[id]/recap`) builds a collage of every photo since the last recap, with AI title and captions; **Share** to Instagram Stories / WhatsApp
 - `npm run seed`: demo crew at **/j/demo** with 3 weeks of history and a first recap
 - `GET /api/health`
@@ -71,7 +76,7 @@ Still missing: the Muse connector (`app/api/connector/`, returns 501), PWA icons
 3. Tap **Pull up** (20 to 60 s), vote, then upload a photo on the active quest. Not at the place? Set `PROOF_CHECK=lenient` (or `off`) in `.env` and restart.
 4. Open **Recap**: **New recap from newer photos** adds the photo you just took. Then **Share**.
 
-Test scripts (use the real database, clean up after themselves): `npx tsx scripts/test-voting.ts [--agent]`, `npx tsx scripts/test-recap.ts`, `npx tsx scripts/test-proof-modes.ts [photo.jpg]` (AI only, no database). `npm run recap:folder -- <folder>` makes a recap card from any folder of photos (no database).
+Test scripts (use the real database, clean up after themselves): `npx tsx scripts/test-voting.ts [--agent]`, `npx tsx scripts/test-recap.ts`, `npx tsx scripts/test-proof-modes.ts [photo.jpg]` (AI only, no database). `npx tsx scripts/test-hours.ts` checks the opening-hours parser (no network). `npm run recap:folder -- <folder>` makes a recap card from any folder of photos (no database).
 
 ## Deploy (Infra)
 

@@ -1,12 +1,11 @@
-// Recap photo collage + Share button. Owner: Frontend.
-import Link from "next/link";
+// Recap tab: photo collage + Share button, and the secret roles reveal. Owner: Frontend.
 import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { requireMember } from "@/lib/session";
-import { getLatestRecap, recapImageUrl } from "@/lib/services/recaps";
-import Blobs from "@/app/components/Blobs";
-import BouncyTitle from "@/app/components/BouncyTitle";
+import { getLatestRecap, getRecapRoles, recapImageUrl } from "@/lib/services/recaps";
+import { featuresOf } from "@/lib/features";
+import PageTitle from "@/app/components/PageTitle";
 import RecapView from "./RecapView";
 
 export const dynamic = "force-dynamic";
@@ -16,22 +15,46 @@ export default async function RecapPage({ params }: { params: Promise<{ crewId: 
   if (!(await requireMember(crewId).catch(() => null))) notFound();
 
   const [[crew], recap] = await Promise.all([
-    db.select({ name: schema.crews.name }).from(schema.crews).where(eq(schema.crews.id, crewId)).limit(1),
+    db
+      .select({ name: schema.crews.name, features: schema.crews.features })
+      .from(schema.crews)
+      .where(eq(schema.crews.id, crewId))
+      .limit(1),
     getLatestRecap(crewId),
   ]);
   if (!crew) notFound();
+  const roles = recap && featuresOf(crew.features).secretRoles ? await getRecapRoles(recap.id) : [];
+  // Grouped by hand: Map.groupBy needs Node 21+, the server may run Node 20.
+  const byQuest = new Map<string, typeof roles>();
+  for (const r of roles) byQuest.set(r.quest, [...(byQuest.get(r.quest) ?? []), r]);
 
   return (
-    <main className="relative mx-auto flex min-h-dvh max-w-md flex-col gap-6 px-4 pb-16 pt-10">
-      <Blobs />
-      <header className="animate-bounce-in text-center">
-        <Link href={`/c/${crewId}`} className="btn inline-block bg-white px-4 py-1 text-sm">
-          ← {crew.name}
-        </Link>
-        <BouncyTitle text="The Recap" className="mt-4 text-5xl" />
-        <p className="mt-2 text-lg">Your best shots, captioned by AI.</p>
-      </header>
+    <>
+      <PageTitle emoji="💥" title="Recap" subtitle="Your best shots, captioned by AI." />
       <RecapView crewId={crewId} crewName={crew.name} imageUrl={recap ? recapImageUrl(recap) : null} />
-    </main>
+
+      {roles.length > 0 && (
+        <section className="sticker animate-bounce-in bg-ink p-5 text-cream">
+          <h2 className="text-2xl font-bold">🤫 Secret roles revealed</h2>
+          {[...byQuest].map(([quest, questRoles], i) => (
+            <details key={quest} open={i === 0} className="group mt-4">
+              <summary className="cursor-pointer list-none text-sm font-bold uppercase tracking-wide opacity-80">
+                <span className="inline-block transition-transform group-open:rotate-90">▶</span> {quest} · {questRoles.length} roles
+              </summary>
+              <ul className="mt-2 flex flex-col gap-2">
+                {questRoles.map((r) => (
+                  <li key={r.name} className="rounded-xl border-2 border-cream/40 p-3">
+                    <b>
+                      {r.name} was {r.emoji} {r.role}
+                    </b>
+                    <span className="mt-1 block text-sm opacity-90">Mission: {r.mission}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ))}
+        </section>
+      )}
+    </>
   );
 }

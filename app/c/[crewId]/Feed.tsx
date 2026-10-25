@@ -29,7 +29,6 @@ export default function Feed({ items }: { items: FeedItem[] }) {
 
   return (
     <section className="flex flex-col gap-4">
-      <h2 className="text-2xl font-bold">Crew feed</h2>
       {error && <p className="animate-shake font-semibold text-red-600">{error}</p>}
       {items.map((p, i) => (
         <article
@@ -50,6 +49,9 @@ export default function Feed({ items }: { items: FeedItem[] }) {
               </span>
             </div>
             {p.caption && <p className="mt-2 text-lg italic">“{p.caption}”</p>}
+            {p.funFact && (
+              <p className="mt-2 animate-pop rounded-xl border-2 border-ink bg-cream px-3 py-2 text-sm">💡 {p.funFact}</p>
+            )}
             {p.verdict === "unsure" && !p.approved && (
               p.mine ? (
                 <p className="mt-2 text-sm">Waiting for a crewmate to approve.</p>

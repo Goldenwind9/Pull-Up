@@ -10,6 +10,8 @@ export const ProofVerdictSchema = z.object({
   confidence: z.number().min(0).max(1),
   reason: z.string(),
   caption: z.string(),
+  // Photo bingo: indexes of the open squares this photo shows. Only asked for when squares are open.
+  bingo: z.array(z.number().int()).optional(),
 });
 export type ProofVerdict = z.infer<typeof ProofVerdictSchema>;
 
@@ -18,6 +20,7 @@ export type VerifyProofInput = {
   task: string; // quests.task
   proofHint: string; // quests.proof_hint
   placeName: string; // quests.place_name
+  bingo?: { idx: number; prompt: string }[]; // photo bingo squares nobody has checked yet
 };
 
 // If anything goes wrong, we return this. "unsure" lets the crew approve with one tap,
@@ -72,8 +75,11 @@ async function checkPhoto(input: VerifyProofInput, systemPrompt: string): Promis
     // 4. Enforce the 20-word caption limit in code, since models don't always obey
     const words = parsed.data.caption.trim().split(/\s+/);
     const caption = words.length > 20 ? words.slice(0, 20).join(" ") + "…" : parsed.data.caption;
+    // Only squares we actually offered count.
+    const offered = new Set((input.bingo ?? []).map((b) => b.idx));
+    const bingo = [...new Set(parsed.data.bingo ?? [])].filter((idx) => offered.has(idx));
 
-    return { ...parsed.data, caption };
+    return { ...parsed.data, caption, bingo };
   } catch (err) {
     console.error("verifyProof failed:", err);
     return FALLBACK;

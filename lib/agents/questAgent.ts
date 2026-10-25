@@ -5,9 +5,11 @@ import { z } from "zod";
 
 import OpenAI from "openai";
 import { ai, MODEL } from "@/lib/ai";
-import { searchPlaces, searchEvents } from "@/lib/serp";
+import { searchPlaces, searchPlacesNearby, searchEvents } from "@/lib/serp";
 import { getPastQuests } from "@/lib/db/queries";
-import { QUEST_SYSTEM_PROMPT, questUserPrompt } from "@/lib/prompts/quest";
+import { openStatus } from "@/lib/hours";
+import { distanceKm, walkMinutes, type Point } from "@/lib/geo";
+import { NOW_SYSTEM_PROMPT, QUEST_SYSTEM_PROMPT, nowUserPrompt, questUserPrompt } from "@/lib/prompts/quest";
 
 export const QuestSchema = z.object({
   title: z.string(),
@@ -36,16 +38,30 @@ export type CrewProfile = {
   homeLng: number;
   radiusKm: number;
   dayOfWeek: string;
+  /** Where searches start. Defaults to home; the fair midpoint of members' starts when known. */
+  searchLat?: number;
+  searchLng?: number;
+  /** Members' starting areas, e.g. ["West Campus", "Downtown"] (fair meetup). */
+  startAreas?: string[];
+  /** Their coordinates: each search result says how far the farthest member is (fair meetup). */
+  memberStarts?: Point[];
+  /** Set for Pull Up Now: the crew is together at `searchLat/Lng` and wants to go right now. */
+  now?: { minutes: number; budget: number; note?: string; locationLabel: string };
 };
+
+/** Pull Up Now: places must be this close on foot... */
+export const NOW_MAX_WALK_MIN = 20;
+/** ...and stay open at least this long after the crew gets there. */
+export const NOW_MIN_OPEN_MIN = 45;
 
 export const MAX_ROUNDS = 6;
 export const MAX_SEARCHES = 3;
 
 /**
- * TODO Implement the quest agent loop:
- * 1. Build messages from lib/prompts/quest.ts + the crew profile.
- * 2. Tools: search_places -> lib/serp.searchPlaces, search_events -> lib/serp.searchEvents,
- *    get_past_quests -> last 8 quests for this crew.
+ * The agent loop:
+ * 1. Messages from lib/prompts/quest.ts + the crew profile (weekly, or Pull Up Now).
+ * 2. Tools: search_places -> lib/serp (walkable + open-now only in Pull Up Now),
+ *    search_events -> lib/serp.searchEvents (weekly only), get_past_quests -> last 8 quests.
  * 3. Loop until the model returns JSON or MAX_ROUNDS is hit.
  * 4. Parse with QuestAgentOutput. Drop any quest whose source_ref was not in this run's
  *    tool results, and ask the model for a replacement.
@@ -94,6 +110,7 @@ export async function runQuestAgent(profile: CrewProfile): Promise<ProposedQuest
   // Everything the tools returned this run. This is the allowlist for the guard.
   const known = new Map<string, KnownPlace>();
   let searches = 0;
+  const center = { lat: profile.searchLat ?? profile.homeLat, lng: profile.searchLng ?? profile.homeLng };
 
   async function runTool(name: string, args: { query: string }): Promise<unknown> {
     if (name === "get_past_quests") return getPastQuests(profile.crewId);
@@ -103,8 +120,37 @@ export async function runQuestAgent(profile: CrewProfile): Promise<ProposedQuest
     }
     searches++;
 
+    if (name === "search_places" && profile.now) {
+      // Only what's walkable and open right now. The model never sees the rest, so it can't pick them.
+      const now = new Date();
+      const results = await searchPlacesNearby(args.query, center.lat, center.lng);
+      const usable = results.flatMap((r) => {
+        if (!r.placeId || r.lat == null || r.lng == null) return [];
+        const walk = walkMinutes(center, { lat: r.lat, lng: r.lng });
+        if (walk > NOW_MAX_WALK_MIN) return [];
+        const status = openStatus(r.operatingHours, now);
+        if (status && (!status.open || (status.closesInMin != null && status.closesInMin < NOW_MIN_OPEN_MIN))) return [];
+        return [{ r, walk, status }];
+      });
+      return usable
+        .sort((a, b) => a.walk - b.walk)
+        .slice(0, 8)
+        .map(({ r, walk, status }) => {
+          known.set(r.placeId, { name: r.name, address: r.address ?? "", lat: r.lat ?? null, lng: r.lng ?? null });
+          return {
+            source_ref: r.placeId,
+            name: r.name,
+            address: r.address,
+            type: r.type,
+            rating: r.rating,
+            price: r.price,
+            walk_min: walk,
+            open: status ? (status.closesInMin == null ? "open late" : `closes in ${status.closesInMin} min`) : "hours unknown",
+          };
+        });
+    }
     if (name === "search_places") {
-      const results = await searchPlaces(args.query, profile.homeLat, profile.homeLng); // top 8, trimmed
+      const results = await searchPlaces(args.query, center.lat, center.lng); // top 8, trimmed
       return results.filter((r) => r.placeId && r.lat != null && r.lng != null).map((r) => {
         const source_ref = r.placeId;
         known.set(source_ref, {
@@ -113,7 +159,20 @@ export async function runQuestAgent(profile: CrewProfile): Promise<ProposedQuest
           lat: r.lat ?? null,
           lng: r.lng ?? null,
         });
-      return { source_ref, name: r.name, address: r.address, type: r.type, rating: r.rating, hours: r.hours };
+        // Fair meetup: straight-line km to the member who's farthest away. Free to compute;
+        // exact trip times come from Directions after the agent picks.
+        const farthest = profile.memberStarts?.length
+          ? Math.max(...profile.memberStarts.map((p) => distanceKm(p, { lat: r.lat!, lng: r.lng! })))
+          : undefined;
+        return {
+          source_ref,
+          name: r.name,
+          address: r.address,
+          type: r.type,
+          rating: r.rating,
+          hours: r.hours,
+          ...(farthest != null ? { farthest_member_km: Math.round(farthest * 10) / 10 } : {}),
+        };
       });
     }
     if (name === "search_events") {
@@ -132,10 +191,17 @@ export async function runQuestAgent(profile: CrewProfile): Promise<ProposedQuest
     return { error: `Unknown tool ${name}` };
   }
 
-  const messages: Msg[] = [
-    { role: "system", content: QUEST_SYSTEM_PROMPT },
-    { role: "user", content: questUserPrompt(profile) },
-  ];
+  const messages: Msg[] = profile.now
+    ? [
+        { role: "system", content: NOW_SYSTEM_PROMPT },
+        { role: "user", content: nowUserPrompt(profile) },
+      ]
+    : [
+        { role: "system", content: QUEST_SYSTEM_PROMPT },
+        { role: "user", content: questUserPrompt(profile) },
+      ];
+  // Pull Up Now has no events tool: events come without coordinates, so "walkable" can't be checked.
+  const runTools = profile.now ? tools.filter((t) => t.type === "function" && t.function.name !== "search_events") : tools;
 
   const valid: ProposedQuest[] = [];
   let repairs = 0;
@@ -145,7 +211,7 @@ export async function runQuestAgent(profile: CrewProfile): Promise<ProposedQuest
     const res = await ai.chat.completions.create({
       model: MODEL!,
       messages,
-      tools,
+      tools: runTools,
       tool_choice: lastRound ? "none" : "auto", // force an answer on the final round
     });
     const msg = res.choices[0].message;

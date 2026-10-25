@@ -41,10 +41,21 @@ Reply with ONLY this JSON (no extra text, no code fences):
   "caption": "playful line, 20 words or fewer"
 }`;
 
-export function verifyProofUserPrompt(q: { task: string; proofHint: string; placeName: string }): string {
+export function verifyProofUserPrompt(q: {
+  task: string;
+  proofHint: string;
+  placeName: string;
+  bingo?: { idx: number; prompt: string }[];
+}): string {
+  const bingo = q.bingo?.length
+    ? `
+
+Photo bingo: these squares are still open: ${JSON.stringify(q.bingo)}
+Add a "bingo" field to your JSON: the "idx" of every square this photo clearly shows, or [] if none. Judge bingo separately from the verdict; be fair but not too strict, it's a game.`
+    : "";
   return `Quest location: ${q.placeName}
 What the crew was supposed to do: ${q.task}
-What the photo should show: ${q.proofHint}
+What the photo should show: ${q.proofHint}${bingo}
 
 Here is the photo.`;
 }

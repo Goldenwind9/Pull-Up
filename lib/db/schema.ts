@@ -15,6 +15,7 @@ import {
   uniqueIndex,
   index,
 } from "drizzle-orm/pg-core";
+import type { Features } from "@/lib/features";
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -33,6 +34,8 @@ export const crews = pgTable("crews", {
   homeLng: doublePrecision("home_lng").notNull(),
   radiusKm: real("radius_km").notNull().default(3),
   createdBy: uuid("created_by").references(() => users.id),
+  // Added: which optional features this crew uses (lib/features.ts). Missing keys = on.
+  features: jsonb("features").$type<Partial<Features>>().notNull().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -42,11 +45,19 @@ export const crewMembers = pgTable(
     crewId: uuid("crew_id").notNull().references(() => crews.id, { onDelete: "cascade" }),
     userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
     joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
+    // Added (fair meetup): where this member usually starts from, e.g. "West Campus".
+    startLabel: text("start_label"),
+    startLat: doublePrecision("start_lat"),
+    startLng: doublePrecision("start_lng"),
   },
   (t) => [primaryKey({ columns: [t.crewId, t.userId] })],
 );
 
 export type QuestStatus = "proposed" | "active" | "done" | "expired";
+// "weekly": one voted quest per week. "now": Pull Up Now, open right now and walkable, no vote.
+export type QuestKind = "weekly" | "now";
+/** One member's trip to the quest's place (fair meetup). */
+export type TravelTime = { userId: string; name: string; from: string; minutes: number; mode: string };
 export type EstCost = "free" | "$" | "$$";
 
 export const quests = pgTable(
@@ -71,6 +82,11 @@ export const quests = pgTable(
     timeNeededMin: integer("time_needed_min"),
     // Added: needed to close the vote 24h after proposals were made.
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    // Added (Pull Up Now): "now" quests skip the vote and expire when the crew's time is up.
+    kind: text("kind").$type<QuestKind>().notNull().default("weekly"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    // Added (fair meetup): each member's travel time to the place, from SerpApi Directions.
+    travel: jsonb("travel").$type<TravelTime[]>(),
   },
   (t) => [index("quests_crew_week_idx").on(t.crewId, t.weekStart)],
 );
@@ -106,8 +122,37 @@ export const proofs = pgTable("proofs", {
   approvedBy: uuid("approved_by").references(() => users.id),
   // Added: the recap this photo went into. Null = not used yet, so the next recap picks it up.
   recapId: uuid("recap_id").references(() => recaps.id, { onDelete: "set null" }),
+  // Added (photo bingo): a fun fact about what's in the photo, from Google Lens + the model.
+  funFact: text("fun_fact"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// Added (secret roles): each member's private role for a quest, revealed in the recap.
+export const questRoles = pgTable(
+  "quest_roles",
+  {
+    questId: uuid("quest_id").notNull().references(() => quests.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    role: text("role").notNull(), // "The Critic"
+    emoji: text("emoji").notNull(),
+    mission: text("mission").notNull(), // "Get everyone to rate their order out of 10."
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.questId, t.userId] })],
+);
+
+// Added (photo bingo): 5 photo prompts per quest, checked off by the photo checker.
+export const bingoSquares = pgTable(
+  "bingo_squares",
+  {
+    questId: uuid("quest_id").notNull().references(() => quests.id, { onDelete: "cascade" }),
+    idx: integer("idx").notNull(), // 0-4
+    prompt: text("prompt").notNull(), // "a stranger's dog"
+    proofId: uuid("proof_id").references(() => proofs.id, { onDelete: "set null" }),
+    checkedAt: timestamp("checked_at", { withTimezone: true }),
+  },
+  (t) => [primaryKey({ columns: [t.questId, t.idx] })],
+);
 
 export const recaps = pgTable("recaps", {
   id: uuid("id").primaryKey().defaultRandom(),

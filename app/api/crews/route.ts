@@ -6,6 +6,8 @@ import { db, schema } from "@/lib/db";
 import { createCrew, joinCrew, inviteLink } from "@/lib/services/crews";
 import { setSession } from "@/lib/session";
 import { VIBES, MIN_VIBES, MAX_VIBES } from "@/lib/vibes";
+import { FeaturesBody } from "@/lib/featuresBody";
+import { DEFAULT_FEATURES } from "@/lib/features";
 
 const Body = z.object({
   crewName: z.string().trim().min(1).max(60),
@@ -14,6 +16,7 @@ const Body = z.object({
   homeLng: z.number(),
   yourName: z.string().trim().min(1).max(40),
   interests: z.array(z.enum(VIBES)).min(MIN_VIBES).max(MAX_VIBES),
+  features: FeaturesBody.optional(), // the optional features the creator picked
 });
 
 export async function POST(req: Request) {
@@ -26,6 +29,7 @@ export async function POST(req: Request) {
     homeLabel: b.homeLabel,
     homeLat: b.homeLat,
     homeLng: b.homeLng,
+    features: b.features ?? DEFAULT_FEATURES,
   });
   const user = await joinCrew(crew.id, b.yourName, b.interests);
   await db.update(schema.crews).set({ createdBy: user.id }).where(eq(schema.crews.id, crew.id));

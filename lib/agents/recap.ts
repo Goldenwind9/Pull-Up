@@ -20,10 +20,13 @@ export type RecapPhoto = {
   confidence: number; // proofs.confidence, used to pick one photo per quest
 };
 export type RecapStats = { questsDone: number; photos: number; votes: number };
+/** A secret role from one of the recap's quests, revealed in the recap. */
+export type RecapRole = { quest: string; name: string; role: string; mission: string };
 export type RecapInput = {
   crewName: string;
   photos: RecapPhoto[]; // every unused accepted proof for the crew
   stats: RecapStats; // for the same stretch of time as the photos
+  roles?: RecapRole[]; // secret roles from those quests: the story can reveal them
 };
 
 const scriptSchema = (photoCount: number) =>
@@ -186,9 +189,10 @@ async function writeScript(
   crewName: string,
   photos: RecapPhoto[],
   images: (Buffer | null)[],
+  roles: RecapRole[] = [],
 ): Promise<RecapScript> {
   const schema = scriptSchema(photos.length);
-  const prompt = recapScriptUserPrompt(crewName, photos);
+  const prompt = recapScriptUserPrompt(crewName, photos, roles);
   let thumbs: (Buffer | null)[] | undefined = await thumbnails(images);
   let feedback = "";
   for (let attempt = 1; attempt <= SCRIPT_ATTEMPTS; attempt++) {
@@ -297,7 +301,7 @@ export async function buildRecap(crewId: string, recapId: string, deps?: RecapDe
     d,
     photos.map((p) => p.photoKey),
   );
-  const script = await writeScript(d, input.crewName, photos, images);
+  const script = await writeScript(d, input.crewName, photos, images, input.roles);
 
   const manifest: RecapManifest = {
     version: 3,

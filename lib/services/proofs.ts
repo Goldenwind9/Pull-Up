@@ -2,10 +2,10 @@
 // One "pass" (or approved "unsure") from anyone completes the quest for the crew (B10, B11).
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { isMember } from "@/lib/db/queries";
-import { putObject } from "@/lib/storage";
+import { crewFeatures, isMember } from "@/lib/db/queries";
+import { putObject, signedUrl } from "@/lib/storage";
 import { logActivity } from "./activity";
 import { ServiceError } from "./errors";
 
@@ -33,7 +33,11 @@ async function completeQuest(crewId: string, questId: string, userId: string) {
  * Only photos that could complete the quest are checked. Once it's done, later photos are
  * accepted from anywhere and just get a caption, so the crew can keep the memories coming (B28).
  */
-export async function submitProof(questId: string, userId: string, photo: Buffer): Promise<Proof> {
+export async function submitProof(
+  questId: string,
+  userId: string,
+  photo: Buffer,
+): Promise<{ proof: Proof; bingo: string[] }> {
   const [quest] = await db.select().from(schema.quests).where(eq(schema.quests.id, questId)).limit(1);
   if (!quest) throw new ServiceError("Quest not found", 404);
   if (!(await isMember(quest.crewId, userId))) throw new ServiceError("You're not in this crew", 403);
@@ -57,9 +61,17 @@ export async function submitProof(questId: string, userId: string, photo: Buffer
   // Lazy import: lib/ai throws at import time without AI_API_KEY.
   const { verifyProof } = await import("@/lib/agents/verifyProof");
   const bonus = quest.status === "done";
+  const { photoBingo } = await crewFeatures(quest.crewId);
+  // Photo bingo: the checker also looks for any square nobody has checked yet.
+  const openSquares = photoBingo
+    ? await db
+        .select({ idx: schema.bingoSquares.idx, prompt: schema.bingoSquares.prompt })
+        .from(schema.bingoSquares)
+        .where(and(eq(schema.bingoSquares.questId, questId), isNull(schema.bingoSquares.proofId)))
+    : [];
   const [verdict] = await Promise.all([
     verifyProof(
-      { photo: jpeg, task: quest.task, proofHint: quest.proofHint, placeName: quest.placeName },
+      { photo: jpeg, task: quest.task, proofHint: quest.proofHint, placeName: quest.placeName, bingo: openSquares },
       bonus ? "off" : undefined,
     ),
     putObject(key, jpeg, "image/jpeg"),
@@ -88,7 +100,27 @@ export async function submitProof(questId: string, userId: string, photo: Buffer
   });
 
   if (verdict.verdict === "pass") await completeQuest(quest.crewId, questId, userId);
-  return proof;
+
+  // "IS NULL" keeps the first photo that checked a square if two land at once.
+  const checked = verdict.bingo?.length
+    ? await db
+        .update(schema.bingoSquares)
+        .set({ proofId: proof.id, checkedAt: new Date() })
+        .where(
+          and(
+            eq(schema.bingoSquares.questId, questId),
+            inArray(schema.bingoSquares.idx, verdict.bingo),
+            isNull(schema.bingoSquares.proofId),
+          ),
+        )
+        .returning({ prompt: schema.bingoSquares.prompt })
+    : [];
+
+  // Fun fact in the background: Lens + the model take a while, and the crew page
+  // refreshes itself while a quest is on, so it shows up on its own.
+  if (photoBingo) void addFunFact(proof.id, key, jpeg, quest.placeName);
+
+  return { proof, bingo: checked.map((c) => c.prompt) };
 }
 
 /** Any crew member except the uploader can approve an "unsure" proof (B11). */
@@ -113,4 +145,14 @@ export async function approveProof(proofId: string, userId: string): Promise<Pro
     .returning();
   await completeQuest(crewId, proof.questId, userId);
   return approved;
+}
+
+async function addFunFact(proofId: string, key: string, photo: Buffer, placeName: string) {
+  try {
+    const { funFactFor } = await import("@/lib/agents/funFact");
+    const fact = await funFactFor({ photo, imageUrl: await signedUrl(key), placeName });
+    if (fact) await db.update(schema.proofs).set({ funFact: fact }).where(eq(schema.proofs.id, proofId));
+  } catch (err) {
+    console.warn("[proofs] fun fact failed:", err);
+  }
 }

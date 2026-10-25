@@ -5,6 +5,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { MIN_VIBES } from "@/lib/vibes";
 import VibePicker from "@/app/components/VibePicker";
+import FeatureToggles from "@/app/components/FeatureToggles";
+import { DEFAULT_FEATURES } from "@/lib/features";
 
 const DEFAULT_HOME = { label: "UT Austin", lat: 30.2849, lng: -97.7341 };
 
@@ -13,6 +15,8 @@ export default function CreateCrewForm() {
   const [crewName, setCrewName] = useState("");
   const [yourName, setYourName] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
+  const [features, setFeatures] = useState(DEFAULT_FEATURES);
+  const [showExtras, setShowExtras] = useState(false);
   const [home, setHome] = useState(DEFAULT_HOME);
   const [locating, setLocating] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -46,6 +50,7 @@ export default function CreateCrewForm() {
         homeLat: home.lat,
         homeLng: home.lng,
         interests: picked,
+        features,
       }),
     });
     if (!res.ok) {
@@ -87,6 +92,24 @@ export default function CreateCrewForm() {
         >
           {locating ? "Finding you…" : "Use my location"}
         </button>
+      </div>
+      <div className="rounded-2xl border-3 border-ink bg-cream p-3">
+        <button
+          type="button"
+          onClick={() => setShowExtras((s) => !s)}
+          className="flex w-full items-center justify-between font-semibold"
+        >
+          <span>
+            ✨ Extras: {Object.values(features).filter(Boolean).length} of {Object.keys(features).length} on
+          </span>
+          <span>{showExtras ? "▲" : "▼"}</span>
+        </button>
+        {showExtras && (
+          <div className="mt-3">
+            <FeatureToggles value={features} onChange={setFeatures} />
+            <p className="mt-2 text-xs">You can change these later in the Crew tab.</p>
+          </div>
+        )}
       </div>
       <button className="btn bg-sun px-4 py-4 text-xl disabled:opacity-40" disabled={!ready || loading}>
         {loading ? (

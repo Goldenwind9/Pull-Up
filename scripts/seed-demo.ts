@@ -19,10 +19,45 @@ const INVITE_CODE = "demo";
 const PHOTO_DIR = path.join(__dirname, "demo-photos");
 
 const MEMBERS = [
-  { name: "Maya", interests: ["food", "music", "outdoors", "art"] },
-  { name: "Jordan", interests: ["games", "sports", "cheap eats", "nightlife"] },
-  { name: "Priya", interests: ["coffee", "art", "thrifting", "music"] },
-  { name: "Leo", interests: ["outdoors", "food", "games", "sports"] },
+  { name: "Maya", interests: ["food", "music", "outdoors", "art"], start: "West Campus" },
+  { name: "Jordan", interests: ["games", "sports", "cheap eats", "nightlife"], start: "Downtown" },
+  { name: "Priya", interests: ["coffee", "art", "thrifting", "music"], start: "Hyde Park" },
+  { name: "Leo", interests: ["outdoors", "food", "games", "sports"], start: "East Austin" },
+];
+
+// Secret roles per week, in MEMBERS order (Maya, Jordan, Priya, Leo). Revealed in the recap.
+const ROLES: { role: string; emoji: string; mission: string }[][] = [
+  [
+    { role: "The Hype Person", emoji: "📣", mission: "Start a slow clap the moment the sun touches the hills." },
+    { role: "The Critic", emoji: "🧐", mission: "Get everyone to rate the view out of 10." },
+    { role: "The Historian", emoji: "📜", mission: "Casually drop one fact about Mount Bonnell at the top." },
+    { role: "The Photographer", emoji: "📸", mission: "Get a dramatic silhouette shot of the crew." },
+  ],
+  [
+    { role: "The Collector", emoji: "🧺", mission: "Leave with a free sticker or flyer from the store." },
+    { role: "The Wildcard", emoji: "🃏", mission: "Convince someone to buy the weirdest album cover." },
+    { role: "The Critic", emoji: "🧐", mission: "Make everyone rate each other's pick out of 10." },
+    { role: "The DJ", emoji: "🎧", mission: "Get the crew to air-guitar one song in the aisle." },
+  ],
+  [
+    { role: "The Navigator", emoji: "🧭", mission: "Secretly choose where on the bridge the crew stands." },
+    { role: "The Counter", emoji: "🦇", mission: "Get everyone to guess how many bats flew out." },
+    { role: "The Snack Boss", emoji: "🍿", mission: "Make sure every person ends up holding a snack." },
+    { role: "The Hype Person", emoji: "📣", mission: "Lead a cheer when the first bat appears." },
+  ],
+];
+
+// Photo bingo per week: [prompt, checked by that week's photo?].
+const BINGO: [string, boolean][][] = [
+  [["the whole crew mid-laugh", true], ["a view of downtown", true], ["someone out of breath", false], ["a lizard", false], ["matching poses", true]],
+  [["the weirdest album cover", true], ["a record older than all of you", true], ["a staff pick card", false], ["someone air-guitaring", false], ["a band shirt", true]],
+  [["a bat in flight", true], ["the Capitol in the background", false], ["a stranger's dog", true], ["snacks on the railing", true], ["sunset on the river", false]],
+];
+
+const FUN_FACTS = [
+  "Mount Bonnell has been an Austin landmark since the 1850s and sits 775 feet above sea level.",
+  "Waterloo Records opened in 1982 and was named after Austin's original name: Waterloo.",
+  "The Congress Avenue Bridge hosts the largest urban bat colony in North America: up to 1.5 million bats.",
 ];
 
 type SeedQuest = {
@@ -243,7 +278,13 @@ async function main() {
       createdAt: joinedAt,
     })
     .returning();
-  await db.insert(schema.crewMembers).values(users.map((u) => ({ crewId: crew.id, userId: u.id, joinedAt })));
+  const { START_AREAS } = await import("@/lib/geo");
+  await db.insert(schema.crewMembers).values(
+    users.map((u, i) => {
+      const start = START_AREAS.find((a) => a.label === MEMBERS[i].start)!;
+      return { crewId: crew.id, userId: u.id, joinedAt, startLabel: start.label, startLat: start.lat, startLng: start.lng };
+    }),
+  );
   await db.insert(schema.activity).values(
     users.map((u) => ({ time: joinedAt, crewId: crew.id, userId: u.id, kind: "joined" as const })),
   );
@@ -285,16 +326,30 @@ async function main() {
       : await placeholderPhoto(winner.title, plan.color);
     const photoKey = `proofs/${crew.id}/${winner.id}/${randomUUID()}.jpg`;
     await putObject(photoKey, photo, "image/jpeg");
-    await db.insert(schema.proofs).values({
-      questId: winner.id,
-      userId: uploader.id,
-      photoKey,
-      verdict: "pass",
-      confidence: 0.92,
-      reason: "The crew is clearly at the spot.",
-      caption: plan.caption,
-      createdAt: proofAt,
-    });
+    const [proof] = await db
+      .insert(schema.proofs)
+      .values({
+        questId: winner.id,
+        userId: uploader.id,
+        photoKey,
+        verdict: "pass",
+        confidence: 0.92,
+        reason: "The crew is clearly at the spot.",
+        caption: plan.caption,
+        funFact: FUN_FACTS[i],
+        createdAt: proofAt,
+      })
+      .returning();
+    await db.insert(schema.questRoles).values(users.map((u, j) => ({ questId: winner.id, userId: u.id, ...ROLES[i][j] })));
+    await db.insert(schema.bingoSquares).values(
+      BINGO[i].map(([prompt, checked], idx) => ({
+        questId: winner.id,
+        idx,
+        prompt,
+        proofId: checked ? proof.id : null,
+        checkedAt: checked ? proofAt : null,
+      })),
+    );
 
     await db.insert(schema.activity).values([
       ...votes.map((v) => ({ time: v.createdAt, crewId: crew.id, userId: v.userId, kind: "voted" as const, questId: v.questId })),
